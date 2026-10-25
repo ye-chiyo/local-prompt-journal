@@ -1,0 +1,5 @@
+# 09 — 归档附件并导出可离线核对的会话包
+
+用户于 2026-10-25 确认此任务的粒度和阻塞关系，任务已发布。
+
+[正式任务](../../../.scratch/local-prompt-journal/issues/09-offline-evidence-export.md) 是后续状态、验收与执行记录的依据。
