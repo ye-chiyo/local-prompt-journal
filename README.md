@@ -2,6 +2,8 @@
 
 最小本机应用：明确选择一个 Codex 桌面会话，通过同版本 App Server 的只读历史接口导入，保存用户提示、AI 消息及来源实际返回的工具证据，在时间线中回看，并导出含原始证据的 JSON。任务 02 的工具证据功能及分组阅读已于 2026-10-25 通过用户验收。
 
+规划更新（2026-10-25）：用户已确认后续改为自动发现和持续归档，不再要求日常手动同步；不同项目分别记录，同一项目按会话开始时间完整排列，不交错消息。原任务 03、04 合并为[多项目自动归档与持续同步](.scratch/local-prompt-journal/issues/03-capture-scope.md)，见[决策记录](docs/adr/0001-automatic-project-archive.md)。该功能尚未实现，下列命令及“当前边界”描述的仍是已交付版本；Windows 登录自启动与首次旧历史回补范围尚待确认。
+
 运行环境：Windows、Python 3.12+、桌面捆绑的 `codex.exe` 位于 PATH。应用只使用 Python 标准库；不需要 API key、模型服务、npm 安装或远端数据库。真实验收版本及限制见 [验证记录](docs/verification/01-single-session-proof.md)。
 
 ## 使用
