@@ -17,6 +17,27 @@ TURNS = [
      ]},
 ]
 MODE = sys.argv[1] if len(sys.argv) > 1 else "normal"
+if MODE == "tools":
+    TURNS[0]["items"].insert(2, {
+        "type": "commandExecution", "id": "cmd-ok", "command": "echo 样本", "cwd": "C:/sample",
+        "commandActions": [], "status": "completed", "aggregatedOutput": "命令原文\n", "exitCode": 0, "durationMs": 12,
+    })
+    TURNS[0]["items"][3:3] = [
+        {"type": "mcpToolCall", "id": "parallel-b", "server": "sample", "tool": "lookup", "arguments": {"key": "相同"},
+         "status": "failed", "result": None, "error": {"message": "乙失败"}},
+        {"type": "mcpToolCall", "id": "parallel-a", "server": "sample", "tool": "lookup", "arguments": {"key": "相同"},
+         "status": "completed", "result": {"content": [{"type": "text", "text": "甲结果"}]}, "error": None},
+        {"type": "dynamicToolCall", "id": "dynamic-long", "namespace": "sample", "tool": "long", "arguments": {"limit": 9000},
+         "status": "completed", "success": True, "contentItems": [{"type": "inputText", "text": "长" * 8000 + "末尾原文"}]},
+        {"type": "commandExecution", "id": "cmd-cut", "command": "echo 截断", "cwd": "C:/sample", "commandActions": [],
+         "status": "completed", "exitCode": 0, "aggregatedOutput": "已取得前缀\nWarning: truncated output"},
+    ]
+    TURNS.append({"id": "turn-2", "status": "interrupted", "itemsView": "full", "items": [
+        {"type": "dynamicToolCall", "id": "missing", "namespace": "sample", "tool": "pending", "arguments": None,
+         "status": "inProgress", "contentItems": None, "success": None},
+        {"type": "functionCallOutput", "id": "output-only", "name": "standalone", "output": "独立原文"},
+        {"type": "futureEvent", "id": "future", "payload": "未来原文"},
+    ]})
 if MODE == "complex":
     TURNS.append({"id": "turn-2", "status": "interrupted", "itemsView": "full", "items": [
         {"type": "userMessage", "id": "user-2", "content": [{"type": "text", "text": "请记录原文。"}, {"type": "localImage", "path": "missing.png"}]},
@@ -56,6 +77,10 @@ for line in sys.stdin:
             result["nextCursor"] = "0"
     elif method == "thread/items/list":
         items = [{"turnId": t["id"], "item": i, "startedAtMs": 100000, "completedAtMs": 101000} for t in history for i in t["items"]]
+        if MODE == "tools":
+            for entry in items:
+                if entry["item"]["id"] == "missing":
+                    entry["completedAtMs"] = None
         if MODE == "conflicting":
             stale = json.loads(json.dumps(items[-1]))
             stale["item"]["text"] = "旧内容"

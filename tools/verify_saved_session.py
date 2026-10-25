@@ -21,11 +21,35 @@ class EvidenceLinks(HTMLParser):
     def __init__(self):
         super().__init__()
         self.links = []
+        self.message_links = []
+        self.in_message = False
+        self.in_identity = False
+        self.message_href = None
 
     def handle_starttag(self, tag, attrs):
-        href = dict(attrs).get("href", "")
+        attributes = dict(attrs)
+        href = attributes.get("href", "")
+        if tag == "details":
+            self.in_message = attributes.get("class", "") in ("message user", "message agent")
+            self.message_href = None
+        if tag == "code" and self.in_message:
+            self.in_identity = True
+        if tag == "br":
+            self.in_identity = False
         if tag == "a" and href.startswith("/evidence/"):
             self.links.append(href)
+            if self.in_message:
+                self.message_href = href
+
+    def handle_endtag(self, tag):
+        if tag == "code":
+            self.in_identity = False
+        if tag == "details":
+            self.in_message = False
+
+    def handle_data(self, data):
+        if self.in_identity and self.message_href:
+            self.message_links.append((data, self.message_href))
 
 
 def start(data_dir):
@@ -93,6 +117,13 @@ def main():
         links.feed(html)
         for link in set(links.links):
             json.loads(read(url + link))
+        visible_message_ids = [identity for identity, _ in links.message_links]
+        expected_message_ids = [i["id"] for t in expected["turns"] for i in t["messages"]]
+        message_links_match = sorted(visible_message_ids) == sorted(expected_message_ids)
+        for identity, href in links.message_links:
+            evidence = json.loads(read(url + href))
+            entries = evidence["response"]["result"].get("data", [])
+            message_links_match &= any(e.get("item", {}).get("id") == identity for e in entries)
     finally:
         stop(process)
     package = json.loads(exported)
@@ -110,7 +141,7 @@ def main():
         "allEvidenceReferencesResolve": all(references) and len(references) == len(wanted),
         "allRawHashesMatch": all(hashlib.sha256(e["raw"].encode("utf-8")).hexdigest() == e["sha256"] for e in package["evidence"]),
         "allRawPayloadsMatch": all(json.loads(e["raw"]) == e["response"] for e in package["evidence"]),
-        "allMessageEvidenceLinksVisibleAndReadable": len(links.links) == len(wanted),
+        "allMessageEvidenceLinksVisibleAndReadable": message_links_match,
         "htmlHasPhaseLabels": all(s in html for s in ["AI 过程消息", "AI 最终回答", "用户原文"]),
         "messages": len(got), "sourceItemCount": session["sourceItemCount"],
         "schemaVersion": package["schemaVersion"], "exportBytes": len(exported),

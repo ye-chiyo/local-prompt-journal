@@ -29,13 +29,35 @@ def page(title: str, body: str) -> str:
     return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style></head><body><header><strong>本机会话记录</strong><span>提示原文 · 回应过程 · 来源证据</span></header><main>{body}</main></body></html>'
 
 
+def display_value(value: Any) -> str:
+    if value is None:
+        return "未知／未取得"
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def tool_html(tool: dict[str, Any], thread: str, query: str) -> str:
+    statuses = {"completed": "执行已完成（不代表业务成功）", "failed": "执行失败", "inProgress": "进行中（未取得最终结果）", "declined": "已拒绝", "unknown": "状态未知"}
+    name = ".".join(str(v) for v in (tool["namespace"], tool["name"]) if v is not None)
+    body = f'<details class="message tool" data-tool-id="{escape(tool["id"], quote=True)}"><summary><span class="label">工具执行 · {escape(name or "名称未知")}</span><span class="phase">{statuses[tool["status"]]} · {"部分内容" if tool["completeness"] == "partial" else "完整性未知"}</span></summary>'
+    for label, value in (("来源类型", tool["type"]), ("来源执行状态", tool["sourceStatus"]),
+                         ("退出码", tool["exitCode"]), ("耗时（毫秒）", tool["durationMs"]),
+                         ("开始时间（来源 Unix 毫秒）", tool["startedAtMs"]), ("结束时间（来源 Unix 毫秒）", tool["completedAtMs"]),
+                         ("参数（来源已提供）", "null" if tool.get("argumentsAvailable") and tool["arguments"] is None else tool["arguments"]), ("结果原文（已取得的全部内容）", tool["result"]),
+                         ("错误信息", tool["error"]), ("来源 success 字段", tool["sourceSuccess"])):
+        body += f'<h3>{label}</h3><pre>{escape(display_value(value))}</pre>'
+    body += '<p class="gap">业务／任务成功：未知。嵌套调用未独立返回时，不从文本推造调用树。</p>'
+    body += ''.join(f'<p class="gap">{escape(r)}</p>' for r in tool["reasons"])
+    index = tool["evidenceRef"].split("/")[2]
+    return body + f'<footer><a href="/evidence/{thread}/{index}{query}" target="_blank" rel="noopener">查看工具原始证据 ↗</a><code>来源身份：{escape(tool["id"])}<br>关联依据：{escape(tool["association"])}<br>导出位置：{escape(tool["evidenceRef"])}</code></footer></details>'
+
+
 def session_page(session: dict[str, Any]) -> str:
     source = session["source"]
     thread = quote(session["id"], safe="")
     query = "?source=" + quote(source["instance"], safe="")
     links = "".join(f'<a href="#turn-{i}">回合 {i + 1}</a>' for i, _ in enumerate(session["turns"]))
-    body = f'<div class="heading"><div><a href="/">← 已保存会话</a><h1>原文时间线</h1><p>{escape(session["name"] or session["id"])}</p><p class="count">{len(session["turns"])} 个回合 · {len(session["messages"])} 条用户与 AI 消息 · 本机快照</p></div><a class="action" href="/export/{thread}{query}">结构化导出 ↓</a></div>'
-    body += f'<div class="layout"><aside class="sidebar"><span class="eyebrow">回合索引</span><nav aria-label="回合索引">{links}</nav><p class="muted">原始措辞完整显示。未解析的条目仍保留在来源证据中。</p></aside><div>'
+    body = f'<div class="heading"><div><a href="/">← 已保存会话</a><h1>原文时间线</h1><p>{escape(session["name"] or session["id"])}</p><p class="count">{len(session["turns"])} 个回合 · {len(session["messages"])} 条用户与 AI 消息 · {len(session.get("tools", []))} 次工具记录 · 本机快照 · 任务 02 工具证据 · 分组阅读</p></div><a class="action" href="/export/{thread}{query}">结构化导出 ↓</a></div>'
+    body += f'<div class="layout"><aside class="sidebar"><span class="eyebrow">回合索引</span><nav aria-label="回合索引">{links}</nav><p class="muted">按对话与执行过程分组阅读，组内保留来源顺序。分组位置不代表所有事件的原始交错顺序；完整顺序可在导出和原始证据中核对。</p></aside><div>'
     gaps = "".join(f'<li>{escape(gap)}</li>' for gap in source["gaps"])
     body += f'<details class="source"><summary>数据源版本与已知缺口</summary><dl><dt>数据源版本</dt><dd>{escape(str(source["version"]))}</dd><dt>保存时间</dt><dd>{escape(session["savedAt"])}</dd><dt>来源实例</dt><dd><code>{escape(source["instance"])}</code></dd><dt>会话身份</dt><dd><code>{escape(session["id"])}</code></dd><dt>已读取</dt><dd>{session["sourceItemCount"]} 条来源条目；完整视图；回合 {source["pagination"]["turnPages"]} 页、条目 {source["pagination"]["itemPages"]} 页</dd><dt>仅存原始证据</dt><dd>{escape(", ".join(source["notDisplayedTypes"]) or "无")}</dd></dl><ul>{gaps}</ul></details>'
     labels = {"commentary": "AI 过程消息", "final_answer": "AI 最终回答"}
@@ -43,7 +65,19 @@ def session_page(session: dict[str, Any]) -> str:
     for index, turn in enumerate(session["turns"]):
         status = statuses.get(turn.get("status"), "状态未知")
         body += f'<section class="turn" id="turn-{index}"><h2>回合 {index + 1}<span class="turn-status">{status}</span></h2>'
-        for message in (m for m in session["messages"] if m["turnId"] == turn["id"]):
+        entries = session["messages"] + session.get("tools", []) + session.get("unsupportedItems", [])
+        execution_html = ""
+        execution_count = 0
+        for message in sorted((m for m in entries if m["turnId"] == turn["id"]), key=lambda m: m["order"]):
+            if "association" in message:
+                execution_html += tool_html(message, thread, query)
+                execution_count += 1
+                continue
+            if message["type"] not in ("userMessage", "agentMessage"):
+                evidence_index = message["evidenceRef"].split("/")[2]
+                execution_html += f'<details class="message"><summary>不支持的条目 · {escape(message["type"])} · 完整性未知</summary><p>{escape(message["reasons"][0])}</p><a href="/evidence/{thread}/{evidence_index}{query}" target="_blank" rel="noopener">查看未支持条目的原始证据 ↗</a><footer><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
+                execution_count += 1
+                continue
             user = message["type"] == "userMessage"
             label = "用户原文" if user else labels.get(message["phase"], "AI 消息 · 阶段未知")
             evidence_index = message["evidenceRef"].split("/")[2]
@@ -53,6 +87,8 @@ def session_page(session: dict[str, Any]) -> str:
                 body += f'<p class="gap">{escape(reason)}</p>'
             source_time = "未知" if message["startedAtMs"] is None else datetime.fromtimestamp(message["startedAtMs"] / 1000, timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S +08:00")
             body += f'<footer><a href="/evidence/{thread}/{evidence_index}{query}" target="_blank" rel="noopener">查看原始证据 ↗</a> · 来源时间：{escape(source_time)}<code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
+        if execution_count:
+            body += f'<details class="source execution"><summary>执行过程 · {execution_count} 条来源记录</summary><p class="muted">工具与其他非对话条目，按本回合的来源顺序排列；文档正文保留在读取它的工具结果中。</p>{execution_html}</details>'
         body += '</section>'
     return page("原文时间线", body + '</div></div>')
 

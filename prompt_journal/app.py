@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 
 from .source import CodexHistory, HistoryError, now
+from .tool_evidence import TOOL_TYPES, tool_record
 
 
 def default_data_dir() -> Path:
@@ -41,18 +42,29 @@ class Journal:
         if expected != actual:
             raise HistoryError("完整回合与分页条目不一致；源可能正在变化或缺失关键记录，请稍后重试。")
         messages: list[dict[str, Any]] = []
+        tools: list[dict[str, Any]] = []
+        unsupported: list[dict[str, Any]] = []
         seen = set()
         gaps = ["仅保存接口当前可取得的历史；不承诺恢复隐藏信息或已丢弃内容。",
-                "任务 01 仅展示用户与 AI 消息；其他条目保留在原始证据中，工具语义尚未验收。",
+                "按来源条目身份保留工具参数与结果；嵌套调用未独立返回时不生成调用树。",
+                "只展示正式历史接口实际返回的条目；不能保证底层包装函数或独立函数输出均已返回。",
+                "工具执行状态不等于任务或业务成功；业务结果未知。",
                 "未复制附件；附件引用不等于附件已备份。",
                 "单次手动快照；未实现自动持续同步。"]
-        for entry, ref in capture["items"]:
+        for order, (entry, ref) in enumerate(capture["items"]):
             item = entry["item"]
             key = (entry["turnId"], item["id"])
             if key in seen:
                 continue
             seen.add(key)
+            if item["type"] in TOOL_TYPES:
+                tools.append(tool_record(entry, ref, order))
+                continue
             if item["type"] not in ("userMessage", "agentMessage"):
+                unsupported.append({"id": item["id"], "turnId": entry["turnId"], "type": item["type"],
+                                    "order": order, "completeness": "unknown",
+                                    "reasons": ["不支持此类型的语义展示；完整来源载荷保留在原始证据中。"],
+                                    "evidenceRef": ref + "/item"})
                 continue
             phase = item.get("phase")
             completeness = "complete"
@@ -68,17 +80,17 @@ class Journal:
                     completeness = "unknown"
                     reasons.append("数据源未提供可识别的 AI 消息阶段。")
             messages.append({"id": item["id"], "turnId": entry["turnId"], "type": item["type"],
-                             "phase": phase, "text": text, "order": len(messages),
+                             "phase": phase, "text": text, "order": order,
                              "startedAtMs": entry.get("startedAtMs"), "completedAtMs": entry.get("completedAtMs"),
                              "completeness": completeness, "reasons": reasons, "evidenceRef": ref + "/item"})
         session = {"id": thread_id, "name": capture["thread"].get("name"), "savedAt": now(),
                    "source": {**capture["source"], "gaps": gaps,
-                              "notDisplayedTypes": sorted({i["type"] for i in actual.values() if i["type"] not in ("userMessage", "agentMessage")}),
+                              "notDisplayedTypes": sorted({i["type"] for i in actual.values() if i["type"] not in TOOL_TYPES | {"userMessage", "agentMessage"}}),
                               "pagination": {"turnPages": sum(e["method"] == "thread/turns/list" for e in capture["evidence"]),
                                              "itemPages": sum(e["method"] == "thread/items/list" for e in capture["evidence"])},
                               "itemsView": "full"},
                    "turns": [{k: v for k, v in t.items() if k != "items"} for t in turns.values()],
-                   "messages": messages, "sourceItemCount": len(actual),
+                   "messages": messages, "tools": tools, "unsupportedItems": unsupported, "sourceItemCount": len(actual),
                    "thread": capture["thread"]}
         package = {"schemaVersion": 1, "session": session, "evidence": capture["evidence"]}
         with closing(self._connect()) as db, db:
