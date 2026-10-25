@@ -1,6 +1,7 @@
 """Controlled external Codex protocol peer; never runs recorded commands."""
 import json
 import sys
+from urllib.request import urlopen
 
 THREAD = "sample-session"
 TURNS = [
@@ -24,20 +25,34 @@ for line in sys.stdin:
     if "id" not in request:
         continue
     method, params = request["method"], request.get("params", {})
+    history = json.loads(json.dumps(TURNS))
+    if MODE == "multi":
+        history[0]["items"][0]["content"][0]["text"] = "会话 " + params.get("threadId", "") + " 原文"
     if method == "initialize":
         result = {"userAgent": "Controlled Codex/fixture-1", "platformOs": "windows", "codexHome": "fixture-only"}
+        if MODE == "network":
+            try:
+                with urlopen("http://journal-isolation.invalid/probe", timeout=1) as response:
+                    result["networkProbe"] = response.read().decode()
+            except OSError:
+                result["networkProbe"] = "blocked"
     elif method == "thread/read":
-        result = {"thread": {"id": THREAD, "name": "中文验收样本", "status": {"type": "notLoaded"}, "turns": []}}
+        result = {"thread": {"id": params["threadId"] if MODE == "multi" else THREAD, "name": "中文验收样本", "status": {"type": "notLoaded"}, "turns": []}}
     elif method == "thread/turns/list":
         start = int(params.get("cursor", "0"))
         limit = params.get("limit", 1)
-        result = {"data": TURNS[start:start + limit], "nextCursor": str(start + limit) if start + limit < len(TURNS) else None}
+        result = {"data": history[start:start + limit], "nextCursor": str(start + limit) if start + limit < len(history) else None}
         if MODE == "summary":
             result["data"][0]["itemsView"] = "summary"
         if MODE == "loop":
             result["nextCursor"] = "0"
     elif method == "thread/items/list":
-        items = [{"turnId": t["id"], "item": i, "startedAtMs": 100000, "completedAtMs": 101000} for t in TURNS for i in t["items"]]
+        items = [{"turnId": t["id"], "item": i, "startedAtMs": 100000, "completedAtMs": 101000} for t in history for i in t["items"]]
+        if MODE == "conflicting":
+            stale = json.loads(json.dumps(items[-1]))
+            stale["item"]["text"] = "旧内容"
+            stale["item"]["phase"] = "commentary"
+            items.insert(len(items) - 1, stale)
         start = int(params.get("cursor", "0"))
         limit = params.get("limit", 1)
         result = {"data": items[start:start + limit], "nextCursor": str(start + limit) if start + limit < len(items) else None}

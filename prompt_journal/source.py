@@ -5,9 +5,11 @@ from collections import deque
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import queue
 import shutil
+import socket
 import subprocess
 import threading
 from typing import Any
@@ -41,11 +43,27 @@ class CodexHistory:
         self.threads: list[threading.Thread] = []
         self.identity: dict[str, Any] = {}
         self.serial = 0
+        self.initialization_evidence: dict[str, Any] | None = None
+        self.proxy_guard: socket.socket | None = None
 
     def __enter__(self) -> CodexHistory:
         try:
+            # Reserve a loopback port without listening. Proxy-aware native startup
+            # requests fail locally instead of reaching the inherited forward proxy.
+            # Hold the reservation until the child exits so another app cannot take it.
+            self.proxy_guard = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if os.name == "nt":
+                self.proxy_guard.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            self.proxy_guard.bind(("127.0.0.1", 0))
+            proxy = f"http://127.0.0.1:{self.proxy_guard.getsockname()[1]}"
+            environment = os.environ.copy()
+            for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FTP_PROXY"):
+                environment[name] = environment[name.lower()] = proxy
+            environment["NO_PROXY"] = environment["no_proxy"] = ""
+            environment.pop("ELECTRON_GET_USE_PROXY", None)
             self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                            stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1)
+                                            stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
+                                            env=environment)
             self.threads = [threading.Thread(target=self._read_stdout, daemon=True),
                             threading.Thread(target=self._read_stderr, daemon=True)]
             for thread in self.threads:
@@ -54,6 +72,7 @@ class CodexHistory:
                 "clientInfo": {"name": "local_prompt_journal", "version": "0.1.0"},
                 "capabilities": {"experimentalApi": True},
             })
+            self.initialization_evidence = self.evidence[0]
             self._send({"method": "initialized"})
             return self
         except Exception:
@@ -78,6 +97,9 @@ class CodexHistory:
                 if stream:
                     stream.close()
             self.process = None
+        if self.proxy_guard:
+            self.proxy_guard.close()
+            self.proxy_guard = None
 
     def _read_stdout(self) -> None:
         assert self.process and self.process.stdout
@@ -136,6 +158,7 @@ class CodexHistory:
         entries: list[tuple[dict[str, Any], str]] = []
         cursor = None
         seen = set()
+        identities: dict[tuple[str, ...], dict[str, Any]] = {}
         while True:
             page_params = dict(params)
             if cursor is not None:
@@ -144,8 +167,17 @@ class CodexHistory:
             evidence_index = len(self.evidence) - 1
             if not isinstance(response.get("data"), list) or "nextCursor" not in response:
                 raise HistoryError(f"{method} 分页结果格式未知。")
-            entries.extend((entry, f"#/evidence/{evidence_index}/response/result/data/{i}")
-                           for i, entry in enumerate(response["data"]))
+            for i, entry in enumerate(response["data"]):
+                try:
+                    identity = (entry["id"],) if method == "thread/turns/list" else (entry["turnId"], entry["item"]["id"])
+                except (KeyError, TypeError) as exc:
+                    raise HistoryError(f"{method} 条目缺少来源身份，不能归档。") from exc
+                if identity in identities:
+                    if identities[identity] != entry:
+                        raise HistoryError(f"{method} 重叠分页内容冲突；保留原快照，请稍后重试。")
+                    continue
+                identities[identity] = entry
+                entries.append((entry, f"#/evidence/{evidence_index}/response/result/data/{i}"))
             cursor = response["nextCursor"]
             if cursor is None:
                 return entries
@@ -156,6 +188,9 @@ class CodexHistory:
     def capture(self, thread_id: str, page_size: int) -> dict[str, Any]:
         if not 1 <= page_size <= 100:
             raise ValueError("分页大小必须在 1–100 之间。")
+        # Every capture is scoped to one selected session. Keep only this
+        # connection's initialization proof; never export a prior session's reads.
+        self.evidence = [self.initialization_evidence] if self.initialization_evidence else []
         metadata = self.request("thread/read", {"threadId": thread_id})
         thread = metadata.get("thread", {})
         if thread.get("id") != thread_id:
@@ -171,5 +206,6 @@ class CodexHistory:
         instance = hashlib.sha256(str(Path(home).resolve()).encode("utf-8")).hexdigest()
         return {"thread": thread, "turns": turns, "items": items,
                 "source": {"instance": instance, "version": self.identity.get("userAgent"),
-                           "transport": "app-server stdio", "identity": self.identity},
+                           "transport": "app-server stdio", "identity": self.identity,
+                           "networkPolicy": "inherited proxies replaced with a reserved non-listening loopback port"},
                 "evidence": list(self.evidence)}

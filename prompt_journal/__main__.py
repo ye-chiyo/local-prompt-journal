@@ -10,15 +10,13 @@ import sys
 import tempfile
 from typing import Any
 
-from .app import Journal
+from .app import Journal, external_path
 from .source import CodexHistory, HistoryError
 from .web import create_server
 
 
 def write_export(destination: Path, content: str) -> None:
-    destination = destination.resolve()
-    if destination.is_relative_to(Path(__file__).resolve().parent.parent):
-        raise ValueError("日志导出必须保存在源码目录以外。")
+    destination = external_path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:

@@ -60,6 +60,25 @@ class SingleSessionAcceptance(unittest.TestCase):
             view = Journal(self.data).import_session("sample-session", source, page_size=1)
         self.assertEqual([m["id"] for m in view["messages"]], ["user-1", "ai-1", "ai-2"])
 
+    def test_conflicting_overlap_is_rejected_and_previous_snapshot_stays_available(self):
+        app = Journal(self.data)
+        with self.source() as source:
+            app.import_session("sample-session", source, page_size=1)
+        before = app.export_session("sample-session")
+        with self.source("conflicting") as source:
+            with self.assertRaises(HistoryError):
+                app.import_session("sample-session", source, page_size=1)
+        self.assertEqual(app.export_session("sample-session"), before)
+
+    def test_reusing_connection_does_not_export_other_sessions_history(self):
+        app = Journal(self.data)
+        with self.source("multi") as source:
+            app.import_session("A", source, page_size=1)
+            app.import_session("B", source, page_size=1)
+        exported = app.export_session("B")
+        self.assertIn("会话 B 原文", exported)
+        self.assertNotIn("会话 A 原文", exported)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,7 +46,7 @@ python -m prompt_journal probe 会话ID --page-size 1 --expected C:/Users/614/Ap
 
 只支持手动导入一个明确指定的会话和查看已保存快照。当前适配器要求正式接口支持完整回合及条目分页；不支持时明确失败，不自动恢复会话，不静默回退旧日志。源变化导致两种分页结果不一致时，拒绝发布新快照，保留上次成功保存的版本。
 
-命令白名单仅含 `initialize`、`thread/read`、`thread/turns/list`、`thread/items/list`，及握手通知。不会调用 `thread/resume`、`turn/start`、注入、历史命令或模型。新增 Python 组件不包含远端客户端；查看服务只绑定 `127.0.0.1`，没有外部脚本、字体或遥测。启动原生 App Server 时显式关闭 analytics、feedback 和 OTel 导出；其版本行为仍由真实契约检查约束。
+命令白名单仅含 `initialize`、`thread/read`、`thread/turns/list`、`thread/items/list`，及握手通知。不会调用 `thread/resume`、`turn/start`、注入、历史命令或模型。新增 Python 组件不包含远端客户端；查看服务只绑定 `127.0.0.1`，没有外部脚本、字体或遥测。启动原生 App Server 时显式关闭 analytics、feedback 和 OTel 导出，并将子进程的 HTTP/HTTPS/ALL 代理覆盖为本进程保留、但不监听的本机端口，清空代理绕过列表，防止继承系统转发代理。当前版本已实测本机失败请求不影响历史读取；这是针对代理客户端的出口防护，并非系统防火墙，不能据此认证任意未来原生版本。
 
 所有额外条目保留在原始证据中；任务 01 不解析工具关联，不浏览子会话，不做全文搜索、标注、附件备份、自动同步或受管理删除。`source.gaps` 和 `source.notDisplayedTypes` 明示这些限制。历史快照保存在本机数据库中；尚未提供快照历史浏览、迁移或清理命令。
 

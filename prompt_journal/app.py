@@ -14,12 +14,17 @@ def default_data_dir() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share"))) / "LocalPromptJournal" / "data"
 
 
+def external_path(path: Path | str) -> Path:
+    destination = Path(path).resolve()
+    if destination.is_relative_to(Path(__file__).resolve().parent.parent):
+        raise ValueError("运行时日志与导出必须位于项目源码以外。")
+    return destination
+
+
 class Journal:
     def __init__(self, data_dir: Path | str | None = None):
         self.data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
-        self.data_dir = self.data_dir.resolve()
-        if self.data_dir.is_relative_to(Path(__file__).resolve().parent.parent):
-            raise ValueError("运行时日志目录必须位于项目源码以外。")
+        self.data_dir = external_path(self.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.data_dir / "journal.sqlite3"
         with closing(self._connect()) as db, db:
