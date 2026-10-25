@@ -1,0 +1,49 @@
+"""Controlled external Codex protocol peer; never runs recorded commands."""
+import json
+import sys
+
+THREAD = "sample-session"
+TURNS = [
+    {"id": "turn-1", "status": "completed", "itemsView": "full", "startedAt": 100,
+     "items": [
+         {"type": "userMessage", "id": "user-1", "content": [{"type": "text", "text": "请记录原文。"}]},
+         {"type": "agentMessage", "id": "ai-1", "text": "正在核对中文。", "phase": "commentary"},
+         {"type": "agentMessage", "id": "ai-2", "text": "原文已保留。", "phase": "final_answer"},
+     ]},
+]
+MODE = sys.argv[1] if len(sys.argv) > 1 else "normal"
+if MODE == "complex":
+    TURNS.append({"id": "turn-2", "status": "interrupted", "itemsView": "full", "items": [
+        {"type": "userMessage", "id": "user-2", "content": [{"type": "text", "text": "请记录原文。"}, {"type": "localImage", "path": "missing.png"}]},
+        {"type": "agentMessage", "id": "ai-3", "text": "<script>不会执行历史代码</script>"},
+        {"type": "futureEvent", "id": "future-1", "payload": "不支持的原始事件"},
+    ]})
+
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    method, params = request["method"], request.get("params", {})
+    if method == "initialize":
+        result = {"userAgent": "Controlled Codex/fixture-1", "platformOs": "windows", "codexHome": "fixture-only"}
+    elif method == "thread/read":
+        result = {"thread": {"id": THREAD, "name": "中文验收样本", "status": {"type": "notLoaded"}, "turns": []}}
+    elif method == "thread/turns/list":
+        start = int(params.get("cursor", "0"))
+        limit = params.get("limit", 1)
+        result = {"data": TURNS[start:start + limit], "nextCursor": str(start + limit) if start + limit < len(TURNS) else None}
+        if MODE == "summary":
+            result["data"][0]["itemsView"] = "summary"
+        if MODE == "loop":
+            result["nextCursor"] = "0"
+    elif method == "thread/items/list":
+        items = [{"turnId": t["id"], "item": i, "startedAtMs": 100000, "completedAtMs": 101000} for t in TURNS for i in t["items"]]
+        start = int(params.get("cursor", "0"))
+        limit = params.get("limit", 1)
+        result = {"data": items[start:start + limit], "nextCursor": str(start + limit) if start + limit < len(items) else None}
+        if MODE == "overlap" and start:
+            result["data"] = items[max(0, start - 1):start + limit]
+    else:
+        print(json.dumps({"id": request["id"], "error": {"code": -32601, "message": "Read-only fixture rejected method"}}), flush=True)
+        continue
+    print(json.dumps({"id": request["id"], "result": result}, ensure_ascii=False), flush=True)
