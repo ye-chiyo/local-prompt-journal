@@ -45,6 +45,7 @@ class CodexHistory:
         self.serial = 0
         self.initialization_evidence: dict[str, Any] | None = None
         self.proxy_guard: socket.socket | None = None
+        self.read_error: str | None = None
 
     def __enter__(self) -> CodexHistory:
         try:
@@ -106,13 +107,20 @@ class CodexHistory:
         try:
             for line in self.process.stdout:
                 self.lines.put(line)
+        except UnicodeError:
+            self.read_error = "历史接口返回非 UTF-8 数据，不能将损坏文本当作原文。"
+        except OSError:
+            self.read_error = "历史接口读取失败。"
         finally:
             self.lines.put(None)
 
     def _read_stderr(self) -> None:
         assert self.process and self.process.stderr
-        for line in self.process.stderr:
-            self.errors.append(line)
+        try:
+            for line in self.process.stderr:
+                self.errors.append(line)
+        except (UnicodeError, OSError):
+            self.errors.append("历史接口诊断信息不可读取。")
 
     def _send(self, message: dict[str, Any]) -> None:
         if not self.process or not self.process.stdin:
@@ -132,6 +140,8 @@ class CodexHistory:
             except queue.Empty as exc:
                 raise HistoryError(f"{method} 超时；未恢复原会话。") from exc
             if raw is None:
+                if self.read_error:
+                    raise HistoryError(self.read_error)
                 raise HistoryError(f"{method} 连接关闭：{''.join(self.errors)}")
             try:
                 response = json.loads(raw)

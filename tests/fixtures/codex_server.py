@@ -3,6 +3,10 @@ import json
 import sys
 from urllib.request import urlopen
 
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 THREAD = "sample-session"
 TURNS = [
     {"id": "turn-1", "status": "completed", "itemsView": "full", "startedAt": 100,
@@ -25,6 +29,10 @@ for line in sys.stdin:
     if "id" not in request:
         continue
     method, params = request["method"], request.get("params", {})
+    if MODE == "invalid-utf8":
+        sys.stdout.buffer.write(b"\xff\n")
+        sys.stdout.buffer.flush()
+        continue
     history = json.loads(json.dumps(TURNS))
     if MODE == "multi":
         history[0]["items"][0]["content"][0]["text"] = "会话 " + params.get("threadId", "") + " 原文"

@@ -79,6 +79,11 @@ class SingleSessionAcceptance(unittest.TestCase):
         self.assertIn("会话 B 原文", exported)
         self.assertNotIn("会话 A 原文", exported)
 
+    def test_invalid_source_encoding_reports_an_explicit_failure(self):
+        with self.assertRaisesRegex(HistoryError, "UTF-8"):
+            with self.source("invalid-utf8") as source:
+                Journal(self.data).import_session("sample-session", source)
+
 
 if __name__ == "__main__":
     unittest.main()
