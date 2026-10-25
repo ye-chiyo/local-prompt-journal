@@ -1,6 +1,6 @@
 # 任务 01 真实会话验证记录
 
-日期：2026-10-25（Asia/Shanghai）。范围：`.scratch/local-prompt-journal/issues/01-single-session-proof.md`。真实样本与公开路径已通过；代码审查完成后再登记任务完成。
+日期：2026-10-25（Asia/Shanghai）。范围：`.scratch/local-prompt-journal/issues/01-single-session-proof.md`。真实样本、公开路径及代码审查已通过，任务 01 已完成。
 
 ## 真实入口与样本
 
@@ -80,3 +80,10 @@
 任务 01 仅提供单次手动快照及消息展示。非聊天条目类型实际观察到 commandExecution、fileChange、mcpToolCall、reasoning、subAgentActivity、webSearch；它们保留原始载荷，未完成工具语义、嵌套／后台关联或子会话浏览验收。无法取得的时间／阶段保持未知。附件尚未复制，不能称为附件备份；源中已丢弃或隐藏的内容不可恢复。没有全格式、全平台或零性能开销承诺。
 
 这些缺口在界面和导出中可见，对应后续任务。02–11 的文件、依赖和验收范围不变，本次不执行它们。
+
+## 最终工程检查
+
+- 移除 `PYTHONIOENCODING` 后，`python -m unittest discover -s tests -v`：12 项通过。覆盖完整路径、重开、中文原文、阶段、证据引用、重复文本、分页重叠／冲突、摘要拒绝、游标循环、来源连接复用隔离、代理边界和错误编码。
+- `python -m mypy`：5 个生产源文件通过。
+- 最终薄真实契约：原文、阶段、身份、状态及两种分页消息集合完全一致。
+- [代码双轴审查](01-code-review.md)：Standards 与 Spec 均无未解决发现；初始问题均已修复并回归。
