@@ -14,7 +14,7 @@ for line in sys.stdin:
     method, params = request["method"], request.get("params", {})
     error = None
     if method == "initialize":
-        result = {"userAgent": "controlled-auto/1", "codexHome": "automatic-fixture"}
+        result = {"userAgent": "controlled-auto/1", "codexHome": state.get("codexHome", "automatic-fixture")}
     elif state.get("unavailable"):
         error = "来源暂时不可用"
     elif method == "thread/list":

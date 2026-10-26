@@ -11,6 +11,7 @@ from typing import Any
 from .source import CodexHistory, HistoryError, now
 from .tool_evidence import TOOL_TYPES, tool_record, require_command_exit
 from .topology import EXECUTION_GAPS, RELATION_GAPS, executions, relocate, relation_records
+from .search import search_sessions
 
 
 def default_data_dir() -> Path:
@@ -168,8 +169,18 @@ class Journal:
             raise ValueError("多个来源具有相同会话 ID；请指定来源实例。")
         return json.loads(rows[0][1])
 
-    def session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
-        return self._view_package(thread_id, instance)["session"]
+    def session(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
+        return self._view_package(thread_id, instance, saved_at)["session"]
+
+    def search(self, query: str, project: str | None = None, thread: str | None = None,
+               instance: str | None = None, offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            rows = db.execute("SELECT package FROM snapshots WHERE number IN (SELECT MAX(number) FROM snapshots GROUP BY instance, thread)").fetchall()
+        sessions = [json.loads(row[0])["session"] for row in rows]
+        for session in sessions:
+            session.setdefault("project", project_identity(session["thread"], session["source"]["instance"]))
+            session.setdefault("createdAt", session["thread"].get("createdAt"))
+        return search_sessions(sorted(sessions, key=session_order), query, project, thread, instance, offset, limit)
 
     def evidence(self, thread_id: str, index: int, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         return self._package(thread_id, instance, saved_at)["evidence"][index]
@@ -212,12 +223,15 @@ class Journal:
         with closing(self._connect()) as db, db:
             db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('collector',?)", (json.dumps(state, ensure_ascii=False),))
 
-    def _view_package(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
-        package = self._package(thread_id, instance)
+    def _view_package(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
+        package = self._package(thread_id, instance, saved_at)
         with closing(self._connect()) as db:
             rows = db.execute("SELECT package FROM snapshots WHERE thread=? AND instance=? ORDER BY number",
                               (thread_id, package["session"]["source"]["instance"])).fetchall()
-        # Use one coherent history if the collector saved again after _package.
+        if saved_at is not None:
+            selected = next(i for i, row in enumerate(rows) if json.loads(row[0])["session"]["savedAt"] == saved_at)
+            rows = rows[:selected + 1]
+        # Use one coherent history; a search target stays at its selected version.
         package = json.loads(rows[-1][0])
         for tool in package["session"].get("tools", []):
             require_command_exit(tool)

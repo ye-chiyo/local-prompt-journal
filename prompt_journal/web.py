@@ -7,10 +7,11 @@ import json
 import hashlib
 import sqlite3
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urlencode
 
 from .app import Journal
 from .sync import Collector
+from .search import item_anchor, searchable_fields
 
 
 STYLE = """
@@ -28,18 +29,45 @@ main{max-width:1240px;margin:30px auto;padding:0 24px}h1{font-size:30px;line-hei
 """
 
 
+STYLE += """
+.search-form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.search-form label{display:grid;gap:4px;min-width:0;max-width:100%}.search-form input,.search-form select,.search-form button{font:inherit;padding:7px;max-width:100%}.search-form input{width:320px}.search-form select{width:280px}.search-form button{cursor:pointer;background:var(--accent);color:white;border:0;padding:9px 20px}mark{background:#ffdf80;color:#172b3a}.message:target{outline:3px solid var(--accent)}.search-result pre{white-space:pre-wrap;overflow-wrap:anywhere}.search-result{overflow-wrap:anywhere}
+"""
+
+
 def page(title: str, body: str) -> str:
-    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 05 · 关联执行证据</span></header><main>{body}</main></body></html>'
+    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 06 · 中文搜索</span></header><main>{body}</main></body></html>'
 
 
 LIVE_SCRIPT = """
 let version = null;
+function locateHit() {
+  const params = new URLSearchParams(location.search);
+  const target = document.getElementById(params.get('target'));
+  if (!target) return;
+  for (let node = target; node; node = node.parentElement) {
+    if (node.tagName === 'DETAILS') node.open = true;
+  }
+  const query = params.get('q');
+  let focus = target;
+  if (query) for (const pre of target.querySelectorAll('pre[data-search]')) {
+    if (pre.dataset.search !== params.get('field')) continue;
+    const text = pre.textContent, position = text.indexOf(query);
+    if (position < 0) continue;
+    const mark = document.createElement('mark');
+    mark.textContent = query;
+    pre.replaceChildren(document.createTextNode(text.slice(0, position)), mark, document.createTextNode(text.slice(position + query.length)));
+    focus = mark;
+    break;
+  }
+  focus.scrollIntoView({block:'center'});
+}
+window.addEventListener('load', () => requestAnimationFrame(locateHit), {once:true});
 async function update() {
   try {
     const response = await fetch('/api/version');
     if (!response.ok) throw new Error();
     const current = (await response.json()).version;
-    if (version !== null && current !== version && !window.getSelection().toString()) {
+    if (version !== null && current !== version && !window.getSelection().toString() && !document.activeElement?.closest('form')) {
       const html = await fetch(location.pathname + location.search);
       if (!html.ok) throw new Error();
       const next = new DOMParser().parseFromString(await html.text(), 'text/html');
@@ -49,7 +77,13 @@ async function update() {
       }
       const position = window.scrollY;
       const focused = document.activeElement?.closest('details[data-key]')?.dataset.key;
+      const formValues = [...document.querySelectorAll('.search-form [name]')].map(el => [el.name, el.value]);
       document.querySelector('main').replaceWith(next.querySelector('main'));
+      for (const [name, value] of formValues) {
+        const el = [...document.querySelectorAll('.search-form [name]')].find(el => el.name === name);
+        if (el) el.value = value;
+      }
+      locateHit();
       if (focused) {
         [...document.querySelectorAll('details[data-key]')].find(d => d.dataset.key === focused)?.querySelector('summary')?.focus({preventScroll:true});
       }
@@ -82,7 +116,7 @@ def saved_time(value: Any) -> str:
 
 
 def collection_html(status: dict[str, Any], database: str) -> str:
-    running = "采集运行中" if status.get("running") else "采集已停止／此页面服务未运行采集器"
+    running = "采集运行中" if status.get("running") else "此页面服务未运行采集器；其他进程的采集状态请在其页面核对"
     availability = "来源不可用" if status.get("sourceAvailable") is False else "来源可访问" if status.get("sourceAvailable") else "等待来源检查"
     if status.get("sourceAvailable") and status.get("discoveredCount") == 0:
         availability += " · 确实没有会话"
@@ -113,7 +147,13 @@ def tool_html(tool: dict[str, Any], thread: str, query: str) -> str:
                          ("开始时间（来源 Unix 毫秒）", tool["startedAtMs"]), ("结束时间（来源 Unix 毫秒）", tool["completedAtMs"]),
                          ("参数（来源已提供）", "null" if tool.get("argumentsAvailable") and tool["arguments"] is None else tool["arguments"]), ("结果原文（已取得的全部内容）", tool["result"]),
                          ("错误信息", tool["error"]), ("来源 success 字段", tool["sourceSuccess"])):
-        body += f'<h3>{label}</h3><pre>{escape(display_value(value))}</pre>'
+        field = ('result' if label == '结果原文（已取得的全部内容）' else 'error' if label == '错误信息' else '') if isinstance(value, str) else ''
+        attribute = f' data-search="{field}"' if field else ''
+        body += f'<h3>{label}</h3><pre{attribute}>{escape(display_value(value))}</pre>'
+    for field, text in searchable_fields(tool, "tool"):
+        if not isinstance(tool.get(field), str):
+            label = '结果' if field == 'result' else '错误'
+            body += f'<h3>{label}中的文本原文</h3><pre data-search="{field}">{escape(text)}</pre>'
     body += '<p class="gap">业务／任务成功：未知。嵌套调用未独立返回时，不从文本推造调用树。</p>'
     body += ''.join(f'<p class="gap">{escape(r)}</p>' for r in tool["reasons"])
     index = tool["evidenceRef"].split("/")[2]
@@ -202,7 +242,8 @@ def session_body(session: dict[str, Any]) -> str:
                 execution_body += execution_html(execution)
         for message in sorted((m for m in entries if m["turnId"] == turn["id"]), key=lambda m: m["order"]):
             if "association" in message:
-                execution_body += tool_html(message, thread, evidence_query)
+                anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "tool")
+                execution_body += tool_html(message, thread, evidence_query).replace('<details ', f'<details id="{anchor}" ', 1)
                 execution_count += 1
                 continue
             if message["type"] not in ("userMessage", "agentMessage"):
@@ -217,7 +258,8 @@ def session_body(session: dict[str, Any]) -> str:
             label = "用户原文" if user else labels.get(message["phase"], "AI 消息 · 阶段未知")
             evidence_index = message["evidenceRef"].split("/")[2]
             completeness = {"complete": "已取得文本", "partial": "部分内容", "unknown": "完整性未知"}[message["completeness"]]
-            body += f'<details open data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary><pre>{escape(message["text"])}</pre>'
+            anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "message")
+            body += f'<details id="{anchor}" open data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary><pre data-search="text">{escape(message["text"])}</pre>'
             for reason in message["reasons"]:
                 body += f'<p class="gap">{escape(reason)}</p>'
             message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
@@ -231,6 +273,53 @@ def session_body(session: dict[str, Any]) -> str:
 
 def session_page(session: dict[str, Any]) -> str:
     return page("原文时间线", session_body(session))
+
+
+def search_form(app: Journal, query: str = "", project_id: str | None = None,
+                scope: str = "") -> str:
+    projects = app.projects()
+    project_options = '<option value="">所有已保存项目</option>'
+    session_options = '<option value="">所有已保存会话</option>'
+    for project in projects:
+        selected = ' selected' if project["id"] == project_id else ''
+        label = f'{project["label"]} · {project.get("sourceProjectId") or project["basis"]} · {project["id"][:8]}'
+        project_options += f'<option value="{project["id"]}"{selected}>{escape(label)}</option>'
+        for session in project["sessions"]:
+            value = json.dumps([session["source"]["instance"], session["id"]])
+            selected = ' selected' if value == scope else ''
+            label = f'{session["name"] or session["id"]} · {session["id"]} · {project["label"]} · 来源 {session["source"]["instance"][:8]}'
+            session_options += f'<option value="{escape(value, quote=True)}"{selected}>{escape(label)}</option>'
+    return ('<section class="source" aria-label="搜索已保存正文"><h2>搜索已保存正文</h2>'
+        '<form class="search-form" action="/search" method="get">'
+        f'<label>中文或混合文本<input name="q" value="{escape(query, quote=True)}" type="search"></label>'
+        f'<label>项目范围<select name="project">{project_options}</select></label>'
+        f'<label>会话范围<select name="scope">{session_options}</select></label>'
+        '<button type="submit">搜索</button></form>'
+        '<p class="count">范围取上述项目与会话的交集；主会话不包含关联会话正文。仅搜索当前保存视图，查询不连接 Codex。</p>'
+        '<p class="count">连续原文子串，区分中英文大小写；空格、换行、标点原样匹配，% _ * 等都是普通文本。全空白输入不搜索。覆盖用户、AI 消息与工具已取得的返回／错误文本；不搜索标题、参数、关系元数据、未支持条目、附件和原始协议 JSON。</p></section>')
+
+
+def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
+    if result["emptyQuery"]:
+        return '<p role="status">请输入要查找的中文词组或混合文本；全空白输入不执行搜索。</p>'
+    if not result["total"]:
+        return '<p role="status">当前范围内已保存且支持检索的文本没有命中。这不表示来源中不存在相关内容；未取得、已丢弃、未支持文本及附件不在搜索范围内。</p>'
+    body = f'<p role="status">共 {result["total"]} 条记录；当前第 {result["offset"] + 1}—{min(result["total"], result["offset"] + result["limit"])} 条，每页最多 {result["limit"]} 条。按会话开始时间排列。</p>'
+    labels = {"text": "消息正文", "result": "工具返回文本", "error": "工具错误文本"}
+    for hit in result["results"]:
+        kind = "用户提示" if hit["type"] == "userMessage" else "AI 过程消息" if hit["phase"] == "commentary" else "AI 最终回答" if hit["phase"] == "final_answer" else "AI 消息（阶段未知）" if hit["kind"] == "message" else labels[hit["field"]]
+        completeness = {"complete": "已取得文本", "partial": "部分内容", "unknown": "完整性未知"}[hit["completeness"]]
+        body += f'<article class="message search-result"><h2><a href="{escape(hit["url"], quote=True)}">{kind} · {escape(hit["sessionName"] or "未命名会话")}</a></h2>'
+        state = f' · {completeness}' if hit["completeness"] != "complete" else ''
+        body += f'<p class="count">项目：{escape(hit["project"]["label"])}{state}</p>'
+        body += f'<pre>{escape(hit["snippet"])}</pre>'
+        body += ''.join(f'<p class="gap">{escape(reason)}</p>' for reason in hit["reasons"])
+        body += f'<footer><a href="{escape(hit["evidenceUrl"], quote=True)}" target="_blank" rel="noopener">查看原始证据 ↗</a> · 点击标题查看完整原文。</footer></article>'
+    for label, offset in (("上一页", max(0, result["offset"] - result["limit"]) if result["offset"] else None), ("下一页", result["nextOffset"])):
+        if offset is not None:
+            href = '/search?' + urlencode({**options, "offset": offset, "limit": result["limit"]})
+            body += f'<a class="action" href="{escape(href, quote=True)}">{label}</a> '
+    return body
 
 
 def create_server(app: Journal, port: int = 8765, collector: Collector | None = None) -> ThreadingHTTPServer:
@@ -256,7 +345,24 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     projects = app.projects()
                     items = ''.join(f'<li><h2><a href="/project/{p["id"]}">{escape(p["label"])}</a></h2><p>{len(p["sessions"])} 个已保存会话 · 归属依据：{escape(p["basis"])}</p></li>' for p in projects)
                     empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见上方。</p></div>' if not items else ""
-                    self.respond(200, "text/html", page("项目归档", collection_html(status(), str(app.database)) + '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty))
+                    self.respond(200, "text/html", page("项目归档", collection_html(status(), str(app.database)) + search_form(app) + '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty))
+                elif url.path in ("/search", "/api/search"):
+                    values = {key: value[0] for key, value in options.items()}
+                    scope = values.get("scope", "")
+                    thread = values.get("session")
+                    if scope:
+                        selected_scope = json.loads(scope)
+                        if not isinstance(selected_scope, list) or len(selected_scope) != 2 or not all(isinstance(s, str) for s in selected_scope):
+                            raise ValueError("会话范围无效。")
+                        instance, thread = selected_scope
+                    result = app.search(values.get("q", ""), values.get("project") or None, thread or None, instance,
+                                        int(values.get("offset", "0")), int(values.get("limit", "30")))
+                    if url.path == "/api/search":
+                        self.respond(200, "application/json", json.dumps(result, ensure_ascii=False))
+                    else:
+                        content = collection_html(status(), str(app.database)) + '<a href="/">← 项目列表</a><h1>正文搜索</h1>'
+                        content += search_form(app, result["query"], result["scope"]["project"], scope)
+                        self.respond(200, "text/html", page("正文搜索", content + search_results(result, values)))
                 elif url.path == "/live.js":
                     self.respond(200, "text/javascript", LIVE_SCRIPT)
                 elif url.path == "/api/status":
@@ -270,7 +376,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     project = next((p for p in app.projects() if p["id"] == segments[1]), None)
                     if project is None:
                         raise KeyError("项目尚未保存")
-                    content = collection_html(status(), str(app.database)) + f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序完整排列。未知时间在后，同时间以来源实例、会话 ID 排序。</p>'
+                    content = collection_html(status(), str(app.database)) + search_form(app, project_id=project["id"]) + f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序完整排列。未知时间在后，同时间以来源实例、会话 ID 排序。</p>'
                     for summary in project["sessions"]:
                         session = app.session(summary["id"], summary["source"]["instance"])
                         # Each session retains its own whole timeline and unique turn anchors.
@@ -284,7 +390,14 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif len(segments) == 3 and segments[:2] == ["api", "session"]:
                     self.respond(200, "application/json", json.dumps(app.session(segments[2], instance), ensure_ascii=False))
                 elif len(segments) == 2 and segments[0] == "session":
-                    self.respond(200, "text/html", page("原文时间线", collection_html(status(), str(app.database)) + session_body(app.session(segments[1], instance))))
+                    saved = options.get("saved", [None])[0]
+                    session = app.session(segments[1], instance, saved)
+                    scope = json.dumps([session["source"]["instance"], session["id"]])
+                    content = collection_html(status(), str(app.database)) + search_form(app, scope=scope)
+                    if saved:
+                        href = '/session/' + quote(session["id"], safe='') + '?' + urlencode({"source": session["source"]["instance"]})
+                        content += f'<p class="source">正在查看命中时的保存版本 {escape(saved)}；原文与证据固定在该版本。<a href="{escape(href, quote=True)}">查看会话最新保存内容</a></p>'
+                    self.respond(200, "text/html", page("原文时间线", content + session_body(session)))
                 elif len(segments) == 2 and segments[0] == "export":
                     self.respond(200, "application/json", app.export_session(segments[1], instance, options.get("related") == ["1"]), download=True)
                 elif len(segments) == 2 and segments[0] == "metadata":
@@ -313,7 +426,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if download:
                 self.send_header("Content-Disposition", 'attachment; filename="session.json"')
             self.end_headers()
