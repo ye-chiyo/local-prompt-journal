@@ -17,14 +17,14 @@ from .web import create_server
 from .sync import Collector
 
 
-def write_export(destination: Path, content: str) -> None:
+def write_export(destination: Path, content: str | bytes) -> None:
     destination = external_path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=destination.parent, delete=False) as stream:
+        with tempfile.NamedTemporaryFile("wb", dir=destination.parent, delete=False) as stream:
             temporary = Path(stream.name)
-            stream.write(content)
+            stream.write(content.encode("utf-8") if isinstance(content, str) else content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
@@ -83,11 +83,11 @@ def main() -> int:
     prober.add_argument("--expected", type=Path)
     prober.add_argument("--report", type=Path)
     commands.add_parser("list", help="查询已保存的本机会话")
-    for name in ("show", "export"):
+    for name in ("show", "export", "bundle"):
         command = commands.add_parser(name)
         command.add_argument("thread_id")
         command.add_argument("--source-instance")
-        if name == "export":
+        if name in ("export", "bundle"):
             command.add_argument("--output", type=Path, required=True)
             command.add_argument("--include-related", action="store_true", help="显式包含一层已保存关联会话；不递归读取来源")
     server = commands.add_parser("serve", help="在 127.0.0.1 打开只读查看服务；Ctrl+C 关闭")
@@ -118,6 +118,9 @@ def main() -> int:
         elif args.command == "export":
             write_export(args.output, app.export_session(args.thread_id, args.source_instance, args.include_related))
             print(json.dumps({"saved": str(args.output.resolve())}, ensure_ascii=False))
+        elif args.command == "bundle":
+            write_export(args.output, app.export_bundle(args.thread_id, args.source_instance, args.include_related))
+            print(json.dumps({"saved": str(args.output.resolve()), "bundleVersion": 1}, ensure_ascii=False))
         elif args.command in ("serve", "run"):
             collector = Collector(app, interval=args.interval, enabled_at=time.time() if args.start_from_now else None) if args.command == "run" else None
             server_instance = create_server(app, args.port, collector)

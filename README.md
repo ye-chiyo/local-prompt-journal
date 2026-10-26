@@ -53,7 +53,7 @@ python -m prompt_journal probe 会话ID --page-size 1 --expected C:/Users/614/Ap
 - HTTP：`GET /api/status`、`GET /api/projects`、`GET /project/<项目身份>`、`GET /api/sessions`、`GET /api/session/<id>`、`GET /session/<id>`、`GET /export/<id>`、`GET /evidence/<id>/<index>`。
 - 相同会话 ID 来自多个来源实例时，查询须指定 `?source=<instance>`，CLI 使用 `--source-instance`，防止合并不同来源。页面链接自动携带身份。
 - 导出是一个自包含 UTF-8 JSON，含 `schemaVersion`、`session`、`evidence`。每条消息的 `evidenceRef` 是该文件内的 JSON Pointer；`evidence` 保存请求参数、实际响应、原始解码行、SHA-256 与采集时间。`raw` 为 UTF-8 解码后的接口行，换行遵循 Python 文本流规范，并非原生数据库的逐字节备份。
-- 保留原始消息 ID、回合 ID、来源实例、源时间、状态与消息顺序。未知时间／阶段显示未知；附件未备份，非文本消息标记部分内容。AI 原文按纯文本显示，不执行 HTML、命令、工具或附件。
+- 保留原始消息 ID、回合 ID、来源实例、源时间、状态与消息顺序。未知时间／阶段显示未知；非文本消息保留原始引用，附件逐条显示归档或缺失状态。AI 原文按纯文本显示，不执行 HTML、命令、工具或附件。
 
 每回合默认连续展示用户、AI 过程及最终消息，保留对话原文与彼此的来源顺序。工具和其他非对话条目集中在回合末默认折叠的“执行过程”中，组内按来源顺序排列；展开后仍可点击“工具执行”查看参数、全部已取得结果、错误、状态及原始证据。工具读取的技能或配置文档正文保留在对应结果里；用户粘贴的文档、AI 对技能的解释仍直接展示，不按关键词隐藏。分组后的页面位置不代表所有事件的原始交错顺序，完整顺序可在导出和原始证据中核对。
 
@@ -97,7 +97,7 @@ python -m prompt_journal probe 会话ID --page-size 1 --expected C:/Users/614/Ap
 
 命令白名单仅含 `initialize`、`thread/list`、`thread/read`、`thread/turns/list`、`thread/items/list`，及握手通知。不会调用 `thread/resume`、`turn/start`、注入、历史命令或模型。新增 Python 组件不包含远端客户端；查看服务只绑定 `127.0.0.1`，没有外部脚本、字体或遥测。启动原生 App Server 时显式关闭 analytics、feedback 和 OTel 导出，并将子进程的 HTTP/HTTPS/ALL 代理覆盖为本进程保留、但不监听的本机端口，清空代理绕过列表，防止继承系统转发代理。当前版本已实测本机失败请求不影响历史读取；这是针对代理客户端的出口防护，并非系统防火墙，不能据此认证任意未来原生版本。
 
-所有额外条目保留在原始证据中；子会话关系仅打开已授权保存的快照，不做标注、附件备份或受管理删除。`source.gaps` 和 `source.notDisplayedTypes` 明示限制。历史快照保存在本机数据库中；修订可从完整导出核对，尚未提供迁移或清理命令。当前真实工具样本只认证了命令与 MCP；动态工具与独立函数输出只有固定协议样本验证，不能据此认证真实来源覆盖率。详情见 [任务 02 验证边界](docs/verification/02-test-boundary.md) 和 [任务 03 交验记录](docs/verification/03-automatic-archive.md)。
+所有额外条目保留在原始证据中；子会话关系仅打开已授权保存的快照，不做人工标注或受管理删除。`source.gaps` 和 `source.notDisplayedTypes` 明示限制。历史快照保存在本机数据库中；修订可从完整导出核对，尚未提供迁移或清理命令。当前真实工具样本只认证了命令与 MCP；动态工具与独立函数输出只有固定协议样本验证，不能据此认证真实来源覆盖率。详情见 [任务 02 验证边界](docs/verification/02-test-boundary.md) 和 [任务 03 交验记录](docs/verification/03-automatic-archive.md)。
 
 ## 开发验证
 
@@ -107,3 +107,22 @@ python -m mypy
 ```
 
 应用运行不依赖 mypy。测试只替换外部 Codex 协议服务，经过真实导入、SQLite 保存、重开、HTTP 页面及 JSON 导出。真实数据不在测试或源码中。测试边界及样本定义见 [边界说明](docs/verification/01-test-boundary.md)。
+
+## 任务 09：附件与可选离线会话包（已验收完成）
+
+自动采集保存正式附件字段可取得的原字节，不用逐条下载。对应消息／工具条目显示“已归档附件”或具体缺失原因，点击本机副本可查看图片或保存普通文件；页面不执行附件内容。已归档副本放在 `--data-dir` 内源码外的受管理目录，原文件移动、服务重启和重复同步后仍可核对。内容同名不覆盖，来源关系分别保留。
+
+只处理明确类型和字段，不解析正文／Markdown 链接或命令输出中的路径，不扫描磁盘，不联网补下载。远端、fileId 无本机解析接口、原文件不存在或保存失败均如实说明。老快照未曾归档的附件不使用今天的文件补成历史版本；本机路径没有来源校验时，说明这是归档时读取的文件，不能证明消息发生时的版本。对话文本与附件分别报告，不宣称完整原生备份。
+
+原 `export` CLI 与 `/export/<id>` 继续返回兼容的 schemaVersion 1 JSON。需要可移动的附件和证据时，可选新命令（输出位置须在源码外）：
+
+```powershell
+python -m prompt_journal --data-dir 外部数据目录 bundle 会话ID --output C:/外部目录/session-bundle.zip
+python -m prompt_journal --data-dir 外部数据目录 bundle 会话ID --include-related --output C:/外部目录/related-bundle.zip
+```
+
+HTTP 为 `/bundle/<id>`，显式一层使用 `?related=1`；多来源同 ID 时同样要求 `source`，CLI 使用 `--source-instance`。默认仅当前会话，显式一层沿用任务 05 的已归档关联范围，不递归，不在导出时连接来源。普通阅读页没有新增导出表单，导出不是自动保存前提。
+
+解压 ZIP 后，`session.json` 保留完整既有导出、原始证据及修订，`manifest.json` 的 `bundleVersion=1` 列出附件对应关系、实际文件校验和缺失项，`attachments/` 保存原字节，`README.txt` 提供离线定位及 PowerShell 校验操作。`bundlePath` 相对解压目录；`evidenceRef` 定位 session.json 内证据，来源原路径／URL 仅供溯源。整目录移动后无需原数据库、原附件、日志服务或网络即可核对。
+
+任务 09 在独立分支和受控数据中验收，未集成并行任务 07 的人工内容；不宣称组合版本已验证。真实来源目前只核对本机 schema 和已有授权证据；该真实样本无附件，MCP 附件等仍只有受控协议验证。实际边界和体验入口见 [任务 09 验证记录](docs/verification/09-offline-evidence-export.md)。

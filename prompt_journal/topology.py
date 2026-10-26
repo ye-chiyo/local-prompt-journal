@@ -35,7 +35,7 @@ def relocate(package: dict[str, Any], prefix: str) -> dict[str, Any]:
 
     def entries(document: dict[str, Any]) -> None:
         session = document["session"]
-        for group in ("messages", "tools", "unsupportedItems", "relations"):
+        for group in ("messages", "tools", "unsupportedItems", "relations", "attachments"):
             for entry in session.get(group, []):
                 ref = entry.get("evidenceRef")
                 if ref:

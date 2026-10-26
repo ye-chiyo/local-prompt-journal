@@ -33,7 +33,7 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         with urlopen(self.url + "/session/sample-session") as response:
             html = response.read().decode()
             self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
-        for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", "阶段未知", "附件尚未备份", "fixture-1", "自动保存到本机数据库", "本会话已入库", str(self.app.database)):
+        for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", "阶段未知", "附件未取得", "fixture-1", "自动保存到本机数据库", "本会话已入库", str(self.app.database)):
             self.assertIn(text, html)
         self.assertNotIn("选择导出范围", html)
         self.assertNotIn('href="/export/', html)

@@ -12,6 +12,7 @@ from .source import CodexHistory, HistoryError, now
 from .tool_evidence import TOOL_TYPES, tool_record, require_command_exit
 from .topology import EXECUTION_GAPS, RELATION_GAPS, executions, relocate, relation_records
 from .search import search_sessions
+from .attachments import archive_attachments, attachment_view, read_copy
 
 
 def default_data_dir() -> Path:
@@ -57,7 +58,7 @@ class Journal:
                 "按来源条目身份保留工具参数与结果；嵌套调用未独立返回时不生成调用树。",
                 "只展示正式历史接口实际返回的条目；不能保证底层包装函数或独立函数输出均已返回。",
                 "工具执行状态不等于任务或业务成功；业务结果未知。",
-                "未复制附件；附件引用不等于附件已备份。",
+                "只归档明确类型和字段中的本机可取得附件；远端、失效及不支持引用说明缺失。附件状态不代表完整原生备份。",
                 "持续采集只在采集服务运行时检查；来源已丢弃的内容无法恢复。"]
         if "scope" in capture["source"]:
             gaps.append("首次范围从启用时开始：只读取启用后开始的回合；更早及跨启用时刻的回合未回补。来源只提供整秒时，启用同秒无法区分先后的回合也不读取；时间未知时报告错误。枚举接口附带的预览不保存。")
@@ -83,7 +84,7 @@ class Journal:
                 text = "\n".join(c["text"] for c in item["content"] if c.get("type") == "text")
                 if any(c.get("type") != "text" for c in item["content"]):
                     completeness = "partial"
-                    reasons.append("非文本输入仅保留原始引用，附件尚未备份。")
+                    reasons.append("含非文本输入；原始引用保留在证据中，附件取得状态见本条目附件。")
             else:
                 text = item["text"]
                 if phase not in ("commentary", "final_answer"):
@@ -149,9 +150,12 @@ class Journal:
                     raise HistoryError("来源本次缺少先前已保存条目；保留原快照与证据，缺失内容不能宣称已恢复。")
                 old_evidence = evidence_payloads(json.loads(row[0])["evidence"])
                 new_evidence = evidence_payloads(package["evidence"])
+                archive_attachments(package, self.data_dir, json.loads(row[0]))
                 if ({k: v for k, v in previous.items() if k != "savedAt"} == {k: v for k, v in session.items() if k != "savedAt"}
                         and old_evidence == new_evidence):
                     return previous
+            else:
+                archive_attachments(package, self.data_dir)
             db.execute("INSERT INTO snapshots(instance, thread, saved, package) VALUES (?, ?, ?, ?)",
                        (session["source"]["instance"], thread_id, session["savedAt"], json.dumps(package, ensure_ascii=False)))
         return session
@@ -184,6 +188,18 @@ class Journal:
 
     def evidence(self, thread_id: str, index: int, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         return self._package(thread_id, instance, saved_at)["evidence"][index]
+
+    def attachment(self, thread_id: str, identity: str, instance: str | None = None,
+                   saved_at: str | None = None) -> tuple[dict[str, Any], bytes]:
+        session = self.session(thread_id, instance, saved_at)
+        attachment = next((a for a in session["attachments"] if a["id"] == identity), None)
+        if attachment is None:
+            raise KeyError("没有此附件引用。")
+        return attachment, read_copy(self.data_dir, attachment)
+
+    def export_bundle(self, thread_id: str, instance: str | None = None, include_related: bool = False) -> bytes:
+        from .offline import build_bundle
+        return build_bundle(json.loads(self.export_session(thread_id, instance, include_related)), self.data_dir)
 
     def metadata(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         session = self._package(thread_id, instance, saved_at)["session"]
@@ -233,9 +249,12 @@ class Journal:
             rows = rows[:selected + 1]
         # Use one coherent history; a search target stays at its selected version.
         package = json.loads(rows[-1][0])
+        attachment_view(package, self.data_dir)
         for tool in package["session"].get("tools", []):
             require_command_exit(tool)
         revisions = [json.loads(row[0]) for row in rows[:-1]]
+        for revision in revisions:
+            attachment_view(revision, self.data_dir)
         package["session"]["executions"] = executions(revisions + [package])
         package["session"]["executionGaps"] = EXECUTION_GAPS
         package["session"]["relations"] = self._relations(package)

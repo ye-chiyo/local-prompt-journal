@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit, urlencode
 from .app import Journal
 from .sync import Collector
 from .search import item_anchor, searchable_fields
+from .attachments import content_type
 
 
 STYLE = """
@@ -35,7 +36,7 @@ STYLE += """
 
 
 def page(title: str, body: str) -> str:
-    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 06 · 中文搜索</span></header><main>{body}</main></body></html>'
+    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 09 · 附件与离线会话包</span></header><main>{body}</main></body></html>'
 
 
 LIVE_SCRIPT = """
@@ -217,6 +218,21 @@ def execution_html(execution: dict[str, Any]) -> str:
     return body + '</details>'
 
 
+def attachments_html(session: dict[str, Any], entry: dict[str, Any]) -> str:
+    body = ''
+    for attachment in session.get('attachments', []):
+        if (attachment['turnId'], attachment['itemId']) != (entry['turnId'], entry['id']):
+            continue
+        name = escape(attachment['name'])
+        if attachment['status'] == 'saved':
+            body += f'<p>已归档附件：<a href="{escape(attachment["url"], quote=True)}" target="_blank" rel="noopener">打开本机副本 · {name} ↗</a>（{attachment["size"]} 字节）</p>'
+            body += f'<p class="count">{escape(attachment.get("versionNote", ""))}</p>'
+        else:
+            body += f'<p class="gap">附件未取得 · {name}：{escape(attachment["reason"])}</p>'
+        body += evidence_link(session['id'], session['source']['instance'], session['savedAt'], attachment['evidenceRef'], '查看附件原始证据')
+    return body
+
+
 def session_body(session: dict[str, Any]) -> str:
     source = session["source"]
     thread = quote(session["id"], safe="")
@@ -227,6 +243,9 @@ def session_body(session: dict[str, Any]) -> str:
     body += f'<p class="count">所属项目：{escape(session.get("project", {}).get("label") or session["thread"].get("cwd") or "项目未知")}</p>'
     body += f'<div class="layout"><aside class="sidebar"><span class="eyebrow">回合索引</span><nav aria-label="回合索引">{links}</nav><p class="muted">按对话与执行过程分组阅读，组内保留来源顺序。分组位置不代表所有事件的原始交错顺序；完整顺序可在导出和原始证据中核对。</p></aside><div>'
     body += relations_html(session)
+    summary = session.get('attachmentSummary')
+    if summary:
+        body += f'<p class="source">附件：已归档 {summary["saved"]} 个引用 · 未取得 {summary["missing"]} 个引用。{escape(summary["note"])}</p>'
     gaps = "".join(f'<li>{escape(gap)}</li>' for gap in source["gaps"])
     body += f'<details class="source" data-key="{thread}:source"><summary>数据源版本与已知缺口</summary><dl><dt>数据源版本</dt><dd>{escape(str(source["version"]))}</dd><dt>保存时间</dt><dd>{escape(session["savedAt"])}</dd><dt>来源实例</dt><dd><code>{escape(source["instance"])}</code></dd><dt>会话身份</dt><dd><code>{escape(session["id"])}</code></dd><dt>已读取</dt><dd>{session["sourceItemCount"]} 条来源条目；完整视图；回合 {source["pagination"]["turnPages"]} 页、条目 {source["pagination"]["itemPages"]} 页</dd><dt>仅存原始证据</dt><dd>{escape(", ".join(source["notDisplayedTypes"]) or "无")}</dd></dl><ul>{gaps}</ul></details>'
     labels = {"commentary": "AI 过程消息", "final_answer": "AI 最终回答"}
@@ -243,7 +262,7 @@ def session_body(session: dict[str, Any]) -> str:
         for message in sorted((m for m in entries if m["turnId"] == turn["id"]), key=lambda m: m["order"]):
             if "association" in message:
                 anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "tool")
-                execution_body += tool_html(message, thread, evidence_query).replace('<details ', f'<details id="{anchor}" ', 1)
+                execution_body += tool_html(message, thread, evidence_query).replace('</footer>', '</footer>' + attachments_html(session, message)).replace('<details ', f'<details id="{anchor}" ', 1)
                 execution_count += 1
                 continue
             if message["type"] not in ("userMessage", "agentMessage"):
@@ -252,6 +271,7 @@ def session_body(session: dict[str, Any]) -> str:
                 item_label = "会话关系来源" if relation_item else "不支持的条目"
                 reason = "关系见上方关联会话；完整原始载荷仍保留。" if relation_item else message["reasons"][0]
                 execution_body += f'<details class="message" data-key="{thread}:{escape(turn["id"], quote=True)}:unsupported:{escape(message["id"], quote=True)}"><summary>{item_label} · {escape(message["type"])} · 完整性未知</summary><p>{escape(reason)}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看条目原始证据 ↗</a><footer><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
+                execution_body += attachments_html(session, message)
                 execution_count += 1
                 continue
             user = message["type"] == "userMessage"
@@ -262,6 +282,7 @@ def session_body(session: dict[str, Any]) -> str:
             body += f'<details id="{anchor}" open data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary><pre data-search="text">{escape(message["text"])}</pre>'
             for reason in message["reasons"]:
                 body += f'<p class="gap">{escape(reason)}</p>'
+            body += attachments_html(session, message)
             message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
             body += f'<footer><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看原始证据 ↗</a> · 来源时间：{escape(message_time)}<code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
         if execution_count:
@@ -294,16 +315,15 @@ def search_form(app: Journal, query: str = "", project_id: str | None = None,
         f'<label>中文或混合文本<input name="q" value="{escape(query, quote=True)}" type="search"></label>'
         f'<label>项目范围<select name="project">{project_options}</select></label>'
         f'<label>会话范围<select name="scope">{session_options}</select></label>'
-        '<button type="submit">搜索</button></form>'
-        '<p class="count">范围取上述项目与会话的交集；主会话不包含关联会话正文。仅搜索当前保存视图，查询不连接 Codex。</p>'
-        '<p class="count">连续原文子串，区分中英文大小写；空格、换行、标点原样匹配，% _ * 等都是普通文本。全空白输入不搜索。覆盖用户、AI 消息与工具已取得的返回／错误文本；不搜索标题、参数、关系元数据、未支持条目、附件和原始协议 JSON。</p></section>')
+        '<button type="submit">搜索</button></form></section>')
 
 
 def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
     if result["emptyQuery"]:
-        return '<p role="status">请输入要查找的中文词组或混合文本；全空白输入不执行搜索。</p>'
+        return '<p role="status">请输入搜索关键词。</p>'
     if not result["total"]:
-        return '<p role="status">当前范围内已保存且支持检索的文本没有命中。这不表示来源中不存在相关内容；未取得、已丢弃、未支持文本及附件不在搜索范围内。</p>'
+        return ('<section class="source" role="status"><h2>未找到相关内容</h2>'
+                f'<p>当前范围内没有匹配“{escape(result["query"])}”的已保存正文。请尝试其他关键词，或扩大搜索范围。</p></section>')
     body = f'<p role="status">共 {result["total"]} 条记录；当前第 {result["offset"] + 1}—{min(result["total"], result["offset"] + result["limit"])} 条，每页最多 {result["limit"]} 条。按会话开始时间排列。</p>'
     labels = {"text": "消息正文", "result": "工具返回文本", "error": "工具错误文本"}
     for hit in result["results"]:
@@ -400,6 +420,12 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     self.respond(200, "text/html", page("原文时间线", content + session_body(session)))
                 elif len(segments) == 2 and segments[0] == "export":
                     self.respond(200, "application/json", app.export_session(segments[1], instance, options.get("related") == ["1"]), download=True)
+                elif len(segments) == 2 and segments[0] == "bundle":
+                    self.respond(200, "application/zip", app.export_bundle(segments[1], instance, options.get("related") == ["1"]), filename="session-bundle.zip")
+                elif len(segments) == 3 and segments[0] == "attachment":
+                    attachment, data = app.attachment(segments[1], segments[2], instance, options.get("saved", [None])[0])
+                    media = content_type(data)
+                    self.respond(200, media, data, filename=None if media.startswith("image/") else attachment["name"])
                 elif len(segments) == 2 and segments[0] == "metadata":
                     self.respond(200, "application/json", json.dumps(app.metadata(segments[1], instance,
                         options.get("saved", [None])[0]), ensure_ascii=False, indent=2))
@@ -418,10 +444,10 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             except (OSError, sqlite3.Error):
                 self.respond(500, "text/plain", "本机存储读取失败，请检查数据目录。")
 
-        def respond(self, status: int, content_type: str, body: str, download: bool = False) -> None:
-            data = body.encode("utf-8")
+        def respond(self, status: int, content_type: str, body: str | bytes, download: bool = False, filename: str | None = None) -> None:
+            data = body.encode("utf-8") if isinstance(body, str) else body
             self.send_response(status)
-            self.send_header("Content-Type", content_type + "; charset=utf-8")
+            self.send_header("Content-Type", content_type + ("; charset=utf-8" if isinstance(body, str) else ""))
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -429,6 +455,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if download:
                 self.send_header("Content-Disposition", 'attachment; filename="session.json"')
+            elif filename:
+                self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(filename, safe=''))
             self.end_headers()
             self.wfile.write(data)
 
