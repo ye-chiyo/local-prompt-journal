@@ -19,6 +19,25 @@ class HistoryError(RuntimeError):
     pass
 
 
+def resolve_codex_executable() -> str | None:
+    configured = os.environ.get("CODEX_EXECUTABLE")
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return str(path)
+    found = shutil.which("codex")
+    if found:
+        return found
+    if os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        candidates = sorted((root / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"),
+                            key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in candidates:
+            if path.is_file():
+                return str(path)
+    return None
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -28,7 +47,7 @@ class CodexHistory:
 
     def __init__(self, command: list[str] | None = None, timeout: float = 20):
         if command is None:
-            exe = shutil.which("codex")
+            exe = resolve_codex_executable()
             if not exe:
                 raise HistoryError("找不到 codex；请安装或将桌面捆绑的 codex.exe 加入 PATH。")
             command = [exe, "-c", "analytics.enabled=false", "-c", "feedback.enabled=false",
