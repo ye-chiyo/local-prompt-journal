@@ -2,7 +2,7 @@
 
 最小本机应用：自带 SQLite 本地数据库，通过同版本 Codex App Server 的只读历史接口自动发现多个项目的会话并持续入库，按项目阅读完整会话，保留用户提示、AI 消息及来源实际返回的工具证据。无需手动下载或另行安装数据库。任务 01、02 已获用户验收；合并后的任务 03 于 2026-10-26 获用户明确“验收通过”，已登记完成。
 
-2026-10-26 范围与状态整理：项目聚焦如实记录、查找和核对日志。任务 07（人工评价与纠正关联）和 08（提示改写版本与使用案例）已取消，07 未提交实现已撤回。保留实际用户消息、来源历史修订和任务 05 的来源关系。01、02、03、05、06、09 已验收，04 并入 03，剩余为 10 受管理删除和 11 日志全流程验证；详见[当前任务列表](.scratch/local-prompt-journal/README.md)。09 原提交 `1be3c26834332807af1cf7c368d04bd835a63dd7` 已快进集成 master；取消范围和本次统一文档已获用户确认，随本次独立文档提交保存，不属于原任务 09 提交。本次不改启用时间、不删除已归档对话。
+2026-10-26 当前交付：项目聚焦如实记录、查找和核对日志。任务 07（人工评价与纠正关联）和 08（提示改写版本与使用案例）已取消，07 未提交实现已撤回。01、02、03、05、06、09 已验收，04 并入 03；本轮按用户“完成剩下的 Issues”授权，在 `codex/remaining-log-issues` 实现 10 受管理删除、运行 11 日志全流程验证并完成首页布局反馈；用户于 2026-10-26 明确验收并要求 commit，已据此登记完成并一次提交。任务 11 已记录受控流程、已有真实证据回归、实时来源状态差异和 Windows 开销，不能据此宣称全部桌面格式或性能已认证；详见[当前任务列表](.scratch/local-prompt-journal/README.md)和[任务 11 交验记录](docs/verification/11-release-verification.md)。09 原提交 `1be3c26834332807af1cf7c368d04bd835a63dd7` 已集成 master，范围文档提交为 `c90e8d2`。本轮不改正式启用时间、不删除正式归档对话，不自动 push。
 
 任务 03、04 合并为[多项目自动归档与持续同步](.scratch/local-prompt-journal/issues/03-capture-scope.md)，见[决策记录](docs/adr/0001-automatic-project-archive.md)。首次范围已确认：从启用后的下一个新回合开始，旧会话随后新开的回合也自动采集；跨启用时刻的旧回合及更早正文不回补。已经授权保存的旧记录继续保留。Windows 登录自启动未获确认，本应用不安装启动项。
 
@@ -28,7 +28,7 @@ python -m prompt_journal probe 会话ID
 # 导入指定会话。重复导入会保留快照版本，当前时间线不会重复显示消息。
 python -m prompt_journal import 会话ID
 
-# 只查看既有保存记录（不运行采集器）；Ctrl+C 关闭。
+# 阅读及管理既有保存记录（不运行采集器）；Ctrl+C 关闭。
 python -m prompt_journal serve
 
 # 关闭应用后仍可查询、导出；这些命令不会连接 Codex。
@@ -99,7 +99,7 @@ python -m prompt_journal probe 会话ID --page-size 1 --expected C:/Users/614/Ap
 
 命令白名单仅含 `initialize`、`thread/list`、`thread/read`、`thread/turns/list`、`thread/items/list`，及握手通知。不会调用 `thread/resume`、`turn/start`、注入、历史命令或模型。新增 Python 组件不包含远端客户端；查看服务只绑定 `127.0.0.1`，没有外部脚本、字体或遥测。启动原生 App Server 时显式关闭 analytics、feedback 和 OTel 导出，并将子进程的 HTTP/HTTPS/ALL 代理覆盖为本进程保留、但不监听的本机端口，清空代理绕过列表，防止继承系统转发代理。当前版本已实测本机失败请求不影响历史读取；这是针对代理客户端的出口防护，并非系统防火墙，不能据此认证任意未来原生版本。
 
-所有额外条目保留在原始证据中；子会话关系仅打开已授权保存的快照，不做人工标注或受管理删除。`source.gaps` 和 `source.notDisplayedTypes` 明示限制。历史快照保存在本机数据库中；修订可从完整导出核对，尚未提供迁移或清理命令。当前真实工具样本只认证了命令与 MCP；动态工具与独立函数输出只有固定协议样本验证，不能据此认证真实来源覆盖率。详情见 [任务 02 验证边界](docs/verification/02-test-boundary.md) 和 [任务 03 交验记录](docs/verification/03-automatic-archive.md)。
+所有额外条目保留在原始证据中；子会话关系仅打开已授权保存的快照，不做人工标注。`source.gaps` 和 `source.notDisplayedTypes` 明示限制。历史快照保存在本机数据库中，修订可从完整导出核对；受管理删除及排除入口见下节，尚未提供跨设备迁移。当前真实工具样本只认证了命令与 MCP；动态工具与独立函数输出只有固定协议样本验证，不能据此认证真实来源覆盖率。详情见 [任务 02 验证边界](docs/verification/02-test-boundary.md) 和 [任务 03 交验记录](docs/verification/03-automatic-archive.md)。
 
 ## 开发验证
 
@@ -127,4 +127,34 @@ HTTP 为 `/bundle/<id>`，显式一层使用 `?related=1`；多来源同 ID 时�
 
 解压 ZIP 后，`session.json` 保留完整既有导出、原始证据及修订，`manifest.json` 的 `bundleVersion=1` 列出附件对应关系、实际文件校验和缺失项，`attachments/` 保存原字节，`README.txt` 提供离线定位及 PowerShell 校验操作。`bundlePath` 相对解压目录；`evidenceRef` 定位 session.json 内证据，来源原路径／URL 仅供溯源。整目录移动后无需原数据库、原附件、日志服务或网络即可核对。
 
-任务 09 在独立分支和受控数据中验收，原提交现已快进集成 master。07、08 已取消；本次主线集成验证见交验记录，统一文档已获用户确认，与后续删除功能的组合验证仍待实施。真实来源目前只核对本机 schema 和已有授权证据；该真实样本无附件，MCP 附件等仍只有受控协议验证。实际边界和体验入口见 [任务 09 验证记录](docs/verification/09-offline-evidence-export.md)。
+任务 09 在独立分支和受控数据中验收，原提交现已快进集成 master。07、08 已取消；与受管理删除的组合验证现见[任务 11 记录](docs/verification/11-release-verification.md)，本轮交付已于 2026-10-26 获用户明确体验确认。真实来源目前只核对本机 schema、已有授权证据和当前新回合的稳定消息／命令；真实样本无附件，MCP 附件等仍只有受控协议验证。实际边界见 [任务 09 验证记录](docs/verification/09-offline-evidence-export.md)。
+
+## 任务 10：受管理删除与删除排除（已验收完成）
+
+会话页点击“删除此会话的受管理日志”，核对会话及来源和删除范围后确认。应用清理该来源会话的正文、工具、全部来源修订、原始证据、搜索内容和附件引用；其他会话仍引用的共享附件保留。删除只影响本应用，不改变 Codex 原会话、原附件或用户另存的导出包，不宣称取证级磁盘擦除。
+
+删除后持久保留排除，持续采集及服务重启都不会自动带回此会话。顶部“删除排除管理”可查看状态并显式解除排除；之后自动采集仍遵守原启用时间，不恢复已删除的历史副本、不回补原范围之前正文。附件清理失败时显示“清理未完成”及实际原因，保持排除；修复文件占用／权限后可重试，应用重开也会重试，完成前不能提前解除排除。
+
+公开 Python：`Journal.delete_session(id, instance=None)`、`restore_session(...)`、`exclusions()`；HTTP 管理入口 `/manage/exclusions`，查询 `/api/exclusions`。CLI 示例（只对自己明确选择的受管理会话执行）：
+
+```powershell
+python -m prompt_journal exclusions
+python -m prompt_journal delete 会话ID --source-instance 来源实例 --yes
+python -m prompt_journal restore 会话ID --source-instance 来源实例
+```
+
+多个来源具有相同会话 ID 时必须明确来源；页面自动携带身份。删除、保存与附件清理以同一 SQLite 写锁协同，读取期间的删除不能被迟到快照覆盖。验证及故障边界见[任务 10 记录](docs/verification/10-managed-deletion.md)。
+
+## 任务 11：全流程演示与运行边界（已验收，保留验证边界）
+
+本轮提供固定中文、四会话／两项目的无敏感演示。用新的源码外目录即可重建，工具只使用受控来源，不读取真实 Codex、不操作正式数据：
+
+```powershell
+python -X utf8 tools/verify_release_flow.py --output 'D:\AI\日志演示-新的目录'
+python -m prompt_journal --data-dir 'D:\AI\日志演示-新的目录\data' serve --port 8791
+# Ctrl+C 停止演示服务。
+```
+
+工具验证自动发现、项目顺序、中文搜索、工具修订、来源中断及重启补回、共享附件删除／排除／恢复，并留下已移动原附件仍可读的归档及离线包。正式采集仍使用前文 `run`，沿用同一正式数据目录，不重新设置启用时间。
+
+当前桌面活动回合视图与独立历史接口对同一回合分别返回 `inProgress`／`interrupted`，稳定条目及证据匹配，状态一致性未通过。100ms 高频受控轮询的采集延迟中位数 159ms、P95 217ms。启用条件的父加来源进程单核等效 CPU 中位数为 62%，包含生成器、采集器、受控来源及每 5ms 调用公开 `Journal.session()` 的观察者；停用条件没有同等观察者，CPU 工作负载不对称，差量不能归因于纯采集器。不宣称低开销，正式默认仍为 3 秒。真实模型回合耗时和物理磁盘写入尚未测量，真实附件仍未认证。详见[完整记录、量值及复现说明](docs/verification/11-release-verification.md)。

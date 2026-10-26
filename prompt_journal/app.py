@@ -13,6 +13,7 @@ from .tool_evidence import TOOL_TYPES, tool_record, require_command_exit
 from .topology import EXECUTION_GAPS, RELATION_GAPS, executions, relocate, relation_records
 from .search import search_sessions
 from .attachments import archive_attachments, attachment_view, read_copy
+from .deletion import ManagedDeletion, excluded, filter_state
 
 
 def default_data_dir() -> Path:
@@ -35,11 +36,27 @@ class Journal:
         with closing(self._connect()) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS snapshots (number INTEGER PRIMARY KEY, instance TEXT NOT NULL, thread TEXT NOT NULL, saved TEXT NOT NULL, package TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS collection_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self._deletion = ManagedDeletion(self.database, self.data_dir)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database, timeout=10)
 
+    def delete_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
+        return self._deletion.delete(thread_id, instance)
+
+    def restore_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
+        return self._deletion.restore(thread_id, instance)
+
+    def exclusions(self) -> list[dict[str, Any]]:
+        return self._deletion.entries()
+
+    def is_excluded(self, thread_id: str, instance: str) -> bool:
+        with closing(self._connect()) as db:
+            return excluded(db, instance, thread_id)
+
     def import_session(self, thread_id: str, source: CodexHistory, page_size: int = 20) -> dict[str, Any]:
+        if self.is_excluded(thread_id, source.instance()):
+            raise HistoryError('会话已删除排除；只有显式解除排除后才允许重新归档。')
         capture = source.capture(thread_id, page_size)
         return self.save_capture(capture)
 
@@ -106,6 +123,9 @@ class Journal:
                    "thread": capture["thread"]}
         package = {"schemaVersion": 1, "session": session, "evidence": capture["evidence"]}
         with closing(self._connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            if excluded(db, session['source']['instance'], thread_id):
+                raise HistoryError('会话已删除排除；读取期间的删除不会被迟到快照覆盖。')
             row = db.execute("SELECT package FROM snapshots WHERE instance=? AND thread=? ORDER BY number DESC LIMIT 1",
                              (session["source"]["instance"], thread_id)).fetchone()
             if row:
@@ -237,7 +257,8 @@ class Journal:
 
     def save_collection_state(self, state: dict[str, Any]) -> None:
         with closing(self._connect()) as db, db:
-            db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('collector',?)", (json.dumps(state, ensure_ascii=False),))
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('collector',?)", (json.dumps(filter_state(db, state), ensure_ascii=False),))
 
     def _view_package(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         package = self._package(thread_id, instance, saved_at)
@@ -301,10 +322,11 @@ class Journal:
             target = record["toId"] if outgoing else record["fromId"]
             saved = summaries.get((instance, target))
             status = statuses.get(target, {})
-            availability = "archived" if saved else "unavailable" if status.get("error") else "notArchived" if target else "unknown"
+            deleted = bool(target and self.is_excluded(target, instance))
+            availability = "deleted" if deleted else "archived" if saved else "unavailable" if status.get("error") else "notArchived" if target else "unknown"
             reason = record["reason"]
             if not saved:
-                detail = status.get("error") or ("目标不在已启用的正文采集范围内；仅保存已取得的关系元数据，不补读正文。"
+                detail = "目标受管理归档已删除并排除；此关系仍来自本会话实际保存的来源证据，不表示目标正文仍可取得。" if deleted else status.get("error") or ("目标不在已启用的正文采集范围内；仅保存已取得的关系元数据，不补读正文。"
                     if status.get("status") == "outsideScope" else "目标尚未获授权归档，可能在启用范围外、不可见或来源未提供；不读取正文。")
                 reason += " " + (detail if target else "目标身份未知。")
             elif status.get("error"):

@@ -61,7 +61,7 @@ class Collector:
 
     def status(self) -> dict[str, Any]:
         with self.lock:
-            return {**self.state, "running": bool(self.thread and self.thread.is_alive() and not self.stopping.is_set()),
+            return {**self.state, **self.journal.collection_state(), 'exclusions': self.journal.exclusions(), "running": bool(self.thread and self.thread.is_alive() and not self.stopping.is_set()),
                     "intervalSeconds": self.interval}
 
     def _publish(self, state: dict[str, Any]) -> None:
@@ -92,6 +92,8 @@ class Collector:
                             if self.stopping.is_set():
                                 break
                             try:
+                                if self.journal.is_excluded(thread['id'], source.instance()):
+                                    continue
                                 updated = thread.get("updatedAt")
                                 created = thread.get("createdAt")
                                 previously_in_scope = bool(saved_sessions.get(thread["id"], {}).get("source", {}).get("scope"))

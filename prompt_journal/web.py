@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import hashlib
 import sqlite3
+import secrets
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urlencode
 
@@ -36,7 +37,7 @@ STYLE += """
 
 
 def page(title: str, body: str) -> str:
-    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 09 · 附件与离线会话包</span></header><main>{body}</main></body></html>'
+    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 附件与离线会话包</span> <a href="/manage/exclusions">删除排除管理</a></header><main>{body}</main></body></html>'
 
 
 LIVE_SCRIPT = """
@@ -186,7 +187,7 @@ def relations_html(session: dict[str, Any]) -> str:
             href = '/session/' + quote(target, safe='') + '?source=' + quote(relation['sourceInstance'], safe='')
             body += f'<p><a href="{href}">查看已归档会话 · {escape(target)}</a></p>'
         else:
-            unavailable = {"unavailable": "来源不可访问／未保存", "notArchived": "尚未归档", "unknown": "目标未知"}
+            unavailable = {"deleted": "受管理归档已删除并排除", "unavailable": "来源不可访问／未保存", "notArchived": "尚未归档", "unknown": "目标未知"}
             body += f'<p>{unavailable.get(relation["availability"], "不可取得")}；没有可打开的归档正文。</p>'
         if relation["reason"]:
             body += f'<p class="gap">{escape(relation["reason"])}</p>'
@@ -343,17 +344,67 @@ def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
 
 
 def create_server(app: Journal, port: int = 8765, collector: Collector | None = None) -> ThreadingHTTPServer:
+    token = secrets.token_urlsafe(32)
+
+    def management_form(action: str, identity: str, instance: str, label: str) -> str:
+        return (f'<form method="post" action="/manage/{action}/{quote(identity, safe="")}">'
+                f'<input type="hidden" name="token" value="{token}">'
+                f'<input type="hidden" name="source" value="{escape(instance, quote=True)}">'
+                f'<button type="submit" class="action">{escape(label)}</button></form>')
+
+    def deletion_scope() -> str:
+        return ('<p>删除范围仅限本应用管理的该来源会话：正文、工具、历史修订、原始证据、搜索内容和附件引用。'
+                '其他会话仍引用的共享附件继续保留。</p><p>不改变 Codex 原会话；不擦除另存的导出副本。'
+                '已删除会话将排除自动归档，只有显式解除排除后才重新采集，仍遵守原启用时间。</p>')
+
     def status() -> dict[str, Any]:
-        return collector.status() if collector else {**app.collection_state(), "running": False}
+        return collector.status() if collector else {**app.collection_state(), 'exclusions': app.exclusions(), "running": False}
 
     class Handler(BaseHTTPRequestHandler):
         server: ThreadingHTTPServer
 
-        def do_GET(self) -> None:
+        def local_request(self, allow_opaque_form: bool = False) -> bool:
             local_port = self.server.server_port
-            allowed_hosts = {f"127.0.0.1:{local_port}", f"localhost:{local_port}"}
-            host = self.headers.get("Host", "")
-            if host not in allowed_hosts or self.headers.get("Origin") not in (None, "http://" + host):
+            host = self.headers.get('Host', '')
+            origin = self.headers.get('Origin')
+            valid_origin = origin in (None, 'http://' + host) or (
+                allow_opaque_form and origin == 'null' and self.headers.get('Sec-Fetch-Site') == 'same-origin')
+            return host in {f'127.0.0.1:{local_port}', f'localhost:{local_port}'} and valid_origin
+
+        def do_POST(self) -> None:
+            if not self.local_request(allow_opaque_form=True):
+                self.respond(403, 'text/plain', '仅允许本机同源访问。')
+                return
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 8192 or self.headers.get('Content-Type', '').split(';')[0] != 'application/x-www-form-urlencoded':
+                    raise ValueError('请求格式无效。')
+                values = parse_qs(self.rfile.read(size).decode('utf-8'))
+                if not secrets.compare_digest(values.get('token', [''])[0].encode('utf-8'), token.encode('ascii')):
+                    self.respond(403, 'text/plain', '确认凭据无效，请重新打开管理页面。')
+                    return
+                segments = [unquote(p) for p in urlsplit(self.path).path.strip('/').split('/')]
+                if len(segments) != 3 or segments[0] != 'manage' or segments[1] not in ('delete', 'restore', 'retry'):
+                    self.respond(404, 'text/plain', '找不到这个操作。')
+                    return
+                instance = values.get('source', [None])[0]
+                if not instance:
+                    raise ValueError('必须明确来源实例。')
+                result = app.restore_session(segments[2], instance) if segments[1] == 'restore' else app.delete_session(segments[2], instance)
+                self.send_response(303)
+                self.send_header('Location', '/manage/exclusions?' + urlencode({'notice': result['status']}))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+            except (ValueError, UnicodeError) as exc:
+                self.respond(400, 'text/plain', str(exc))
+            except KeyError as exc:
+                self.respond(404, 'text/plain', str(exc))
+            except (OSError, sqlite3.Error):
+                self.respond(500, 'text/plain', '本机存储操作失败；未确认完成。请检查数据目录后在管理页核对并重试。')
+
+        def do_GET(self) -> None:
+            if not self.local_request():
                 self.respond(403, "text/plain", "仅允许本机同源访问。")
                 return
             url = urlsplit(self.path)
@@ -361,11 +412,41 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             options = parse_qs(url.query)
             instance = options.get("source", [None])[0]
             try:
-                if url.path == "/":
+                if url.path == '/api/exclusions':
+                    self.respond(200, 'application/json', json.dumps(app.exclusions(), ensure_ascii=False))
+                elif url.path == '/manage/exclusions':
+                    body = '<a href="/">← 项目列表</a><h1>删除排除管理</h1>' + deletion_scope()
+                    notices = {'deleted': '已删除受管理日志，并保留删除排除。', 'cleanupPending': '正文与证据已删除；附件清理未完成，请修复文件占用或权限后重试。重启也会重试。',
+                               'restored': '已解除删除排除，等待原范围内自动归档；已删除的历史副本不会恢复。'}
+                    notice = notices.get(options.get('notice', [''])[0])
+                    if notice:
+                        body += f'<p class="source" role="status">{notice}</p>'
+                    entries = app.exclusions()
+                    if not entries:
+                        body += '<p class="empty">没有删除排除。</p>'
+                    for entry in entries:
+                        pending = entry['status'] == 'cleanupPending'
+                        body += f'<section class="source"><h2>{escape(entry["id"])}</h2><p>来源实例：<code>{escape(entry["sourceInstance"])}</code></p><p>{"附件清理未完成，保持删除排除" if pending else "受管理日志已删除，保持删除排除"}</p>'
+                        if pending:
+                            body += f'<p class="gap">{escape(entry["error"] or "等待清理")}</p>'
+                            body += management_form('retry', entry['id'], entry['sourceInstance'], '重试附件清理')
+                        else:
+                            body += management_form('restore', entry['id'], entry['sourceInstance'], '解除删除排除')
+                        body += '</section>'
+                    self.respond(200, 'text/html', page('删除排除管理', body))
+                elif len(segments) == 3 and segments[:2] == ['manage', 'delete']:
+                    session = app.session(segments[2], instance)
+                    href = '/session/' + quote(session['id'], safe='') + '?' + urlencode({'source': session['source']['instance']})
+                    body = f'<h1>确认删除受管理日志</h1><h2>{escape(session["name"] or session["id"])}</h2><p>会话：<code>{escape(session["id"])}</code> · 来源：<code>{escape(session["source"]["instance"])}</code></p>'
+                    body += deletion_scope() + management_form('delete', session['id'], session['source']['instance'], '确认删除此会话的受管理日志')
+                    body += f'<p><a href="{escape(href, quote=True)}">取消，返回会话</a></p>'
+                    self.respond(200, 'text/html', page('确认删除', body))
+                elif url.path == "/":
                     projects = app.projects()
                     items = ''.join(f'<li><h2><a href="/project/{p["id"]}">{escape(p["label"])}</a></h2><p>{len(p["sessions"])} 个已保存会话 · 归属依据：{escape(p["basis"])}</p></li>' for p in projects)
-                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见上方。</p></div>' if not items else ""
-                    self.respond(200, "text/html", page("项目归档", collection_html(status(), str(app.database)) + search_form(app) + '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty))
+                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见下方。</p></div>' if not items else ""
+                    archive = '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty
+                    self.respond(200, "text/html", page("项目归档", archive + search_form(app) + collection_html(status(), str(app.database))))
                 elif url.path in ("/search", "/api/search"):
                     values = {key: value[0] for key, value in options.items()}
                     scope = values.get("scope", "")
@@ -414,6 +495,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     session = app.session(segments[1], instance, saved)
                     scope = json.dumps([session["source"]["instance"], session["id"]])
                     content = collection_html(status(), str(app.database)) + search_form(app, scope=scope)
+                    delete_href = '/manage/delete/' + quote(session['id'], safe='') + '?' + urlencode({'source': session['source']['instance']})
+                    content += f'<p><a href="{escape(delete_href, quote=True)}">删除此会话的受管理日志</a></p>'
                     if saved:
                         href = '/session/' + quote(session["id"], safe='') + '?' + urlencode({"source": session["source"]["instance"]})
                         content += f'<p class="source">正在查看命中时的保存版本 {escape(saved)}；原文与证据固定在该版本。<a href="{escape(href, quote=True)}">查看会话最新保存内容</a></p>'

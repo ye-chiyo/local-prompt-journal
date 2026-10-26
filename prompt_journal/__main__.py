@@ -83,6 +83,13 @@ def main() -> int:
     prober.add_argument("--expected", type=Path)
     prober.add_argument("--report", type=Path)
     commands.add_parser("list", help="查询已保存的本机会话")
+    commands.add_parser('exclusions', help='查看删除排除及未完成的附件清理')
+    for name in ('delete', 'restore'):
+        management = commands.add_parser(name, help='删除受管理日志并排除自动归档' if name == 'delete' else '显式解除删除排除；沿用原自动采集范围')
+        management.add_argument('thread_id')
+        management.add_argument('--source-instance')
+        if name == 'delete':
+            management.add_argument('--yes', action='store_true', required=True, help='确认仅删除本应用归档；不改 Codex 原会话或另存导出')
     for name in ("show", "export", "bundle"):
         command = commands.add_parser(name)
         command.add_argument("thread_id")
@@ -90,7 +97,7 @@ def main() -> int:
         if name in ("export", "bundle"):
             command.add_argument("--output", type=Path, required=True)
             command.add_argument("--include-related", action="store_true", help="显式包含一层已保存关联会话；不递归读取来源")
-    server = commands.add_parser("serve", help="在 127.0.0.1 打开只读查看服务；Ctrl+C 关闭")
+    server = commands.add_parser("serve", help="在 127.0.0.1 打开不采集的本机阅读与管理服务；Ctrl+C 关闭")
     server.add_argument("--port", type=int, default=8765)
     runner = commands.add_parser("run", help="启动自动发现、持续采集与本机页面；Ctrl+C 停止")
     runner.add_argument("--port", type=int, default=8766)
@@ -113,6 +120,12 @@ def main() -> int:
             print(json.dumps({"saved": True, "threadId": view["id"], "messageCount": len(view["messages"]), "dataDir": str(app.data_dir)}, ensure_ascii=False))
         elif args.command == "list":
             print(json.dumps(app.sessions(), ensure_ascii=False, indent=2))
+        elif args.command == 'exclusions':
+            print(json.dumps(app.exclusions(), ensure_ascii=False, indent=2))
+        elif args.command in ('delete', 'restore'):
+            outcome = app.delete_session(args.thread_id, args.source_instance) if args.command == 'delete' else app.restore_session(args.thread_id, args.source_instance)
+            print(json.dumps(outcome, ensure_ascii=False, indent=2))
+            return 1 if outcome['status'] == 'cleanupPending' else 0
         elif args.command == "show":
             print(json.dumps(app.session(args.thread_id, args.source_instance), ensure_ascii=False, indent=2))
         elif args.command == "export":
