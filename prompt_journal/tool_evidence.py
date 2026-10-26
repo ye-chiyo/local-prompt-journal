@@ -51,7 +51,7 @@ def tool_record(entry: dict[str, Any], ref: str, order: int) -> dict[str, Any]:
     if status == "completed" and result is None and error is None:
         status = "unknown"
         reasons.append("来源声称完成但未取得结果；展示状态未知，原状态另行保留。")
-    return {"id": item["id"], "turnId": entry["turnId"], "type": kind, "order": order,
+    record = {"id": item["id"], "turnId": entry["turnId"], "type": kind, "order": order,
             "name": name, "namespace": item.get("server", item.get("namespace")),
             "arguments": arguments, "argumentsAvailable": arguments_available, "result": result, "error": error,
             "status": status, "sourceStatus": item.get("status"), "sourceSuccess": item.get("success"),
@@ -60,3 +60,11 @@ def tool_record(entry: dict[str, Any], ref: str, order: int) -> dict[str, Any]:
             "businessOutcome": "unknown", "completeness": completeness, "reasons": reasons,
             "association": "standaloneOutput" if kind == "functionCallOutput" else "sourceItemIdentity",
             "evidenceRef": ref + "/item"}
+    require_command_exit(record)
+    return record
+
+
+def require_command_exit(tool: dict[str, Any]) -> None:
+    if tool["type"] == "commandExecution" and tool["status"] == "completed" and tool.get("exitCode") is None:
+        tool["status"] = "unknown"
+        tool["reasons"].append("来源声称完成但未提供退出码；退出结果未知，不能据此认定执行成功。")

@@ -9,6 +9,7 @@ from typing import Any, BinaryIO
 
 from .app import Journal
 from .source import CodexHistory, HistoryError, now
+from .topology import remember_relation_metadata
 
 
 class Collector:
@@ -83,6 +84,7 @@ class Collector:
                     while not self.stopping.is_set():
                         started = time.monotonic()
                         metadata = source.discover(self.page_size)
+                        relation_metadata = remember_relation_metadata(metadata, source.instance(), self.state.get("relationMetadata", []))
                         saved_sessions = {s["id"]: s for s in self.journal.sessions() if s["source"]["instance"] == source.instance()}
                         results = []
                         last_success = self.state.get("lastSuccessAt")
@@ -119,6 +121,7 @@ class Collector:
                                 results.append({"id": saved_session["id"], "source": source.instance(), "status": "missing",
                                     "error": "来源本轮枚举未返回此已保存会话；可能已丢弃或不可见。保留已有记录，未宣称恢复。"})
                         self._publish({**self.state, "sessions": results, "error": None, "sourceAvailable": True,
+                            "relationMetadata": relation_metadata,
                             "discoveredCount": len(metadata), "lastCheckedAt": now(), "lastSuccessAt": last_success,
                             "lastSourceSuccessAt": now(),
                             "cycleSeconds": round(time.monotonic() - started, 3)})

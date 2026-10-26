@@ -29,7 +29,7 @@ main{max-width:1240px;margin:30px auto;padding:0 24px}h1{font-size:30px;line-hei
 
 
 def page(title: str, body: str) -> str:
-    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 03 · 分组阅读</span></header><main>{body}</main></body></html>'
+    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><header><strong>本机会话记录</strong><span>多项目自动归档 · 任务 05 · 关联执行证据</span></header><main>{body}</main></body></html>'
 
 
 LIVE_SCRIPT = """
@@ -81,7 +81,7 @@ def saved_time(value: Any) -> str:
     return source_time(datetime.fromisoformat(value).timestamp()) if value else "尚无"
 
 
-def collection_html(status: dict[str, Any]) -> str:
+def collection_html(status: dict[str, Any], database: str) -> str:
     running = "采集运行中" if status.get("running") else "采集已停止／此页面服务未运行采集器"
     availability = "来源不可用" if status.get("sourceAvailable") is False else "来源可访问" if status.get("sourceAvailable") else "等待来源检查"
     if status.get("sourceAvailable") and status.get("discoveredCount") == 0:
@@ -89,7 +89,10 @@ def collection_html(status: dict[str, Any]) -> str:
     rows = [f'<li>会话 {escape(s["id"])}：{escape(s["error"])}</li>' for s in status.get("sessions", []) if s.get("error")]
     saved = sum(s.get("status") == "saved" for s in status.get("sessions", []))
     error = escape(status.get("error") or "无来源级错误")
-    return (f'<section class="source" aria-label="采集运行状态"><strong>{running} · {availability}</strong>'
+    return ('<section class="source" aria-label="本机数据库与采集状态"><strong>自动保存到本机数据库 · 无需手动下载</strong>'
+            f'<dl><dt>数据库文件</dt><dd>{escape(database)}</dd></dl>'
+            '<p>应用自带 SQLite 数据库，无需另行安装。对话、工具记录、原始证据与修订会在采集服务运行时自动入库；重新打开后直接读取已保存记录。</p>'
+            f'<p><strong>{running} · {availability}</strong></p>'
             f'<p>最近成功归档检查：{saved_time(status.get("lastSuccessAt"))} · 最近来源成功检查：{saved_time(status.get("lastSourceSuccessAt"))}</p>'
             f'<p>上次完整检查发现 {status.get("discoveredCount", 0)} 个会话；范围内保存成功 {saved} 个，失败 {len(rows)} 个。最近检查：{saved_time(status.get("lastCheckedAt"))}。当前来源错误：{error}</p>'
             f'<ul>{"".join(rows)}</ul><p class="muted">首次启用：{source_time(status.get("enabledAt"))}。只读取启用后开始的回合；旧会话的新回合会自动采集，跨启用时刻的旧回合不回补。来源只提供整秒时，启用同秒无法区分先后的回合也不读取；开始时间未知会报告错误。页面关闭后，仍在运行的采集服务继续工作。</p></section>')
@@ -117,14 +120,73 @@ def tool_html(tool: dict[str, Any], thread: str, query: str) -> str:
     return body + f'<footer><a href="/evidence/{thread}/{index}{query}" target="_blank" rel="noopener">查看工具原始证据 ↗</a><code>来源身份：{escape(tool["id"])}<br>关联依据：{escape(tool["association"])}<br>导出位置：{escape(tool["evidenceRef"])}</code></footer></details>'
 
 
+def evidence_link(owner: str, instance: str, saved_at: str, ref: str, label: str) -> str:
+    query = '?source=' + quote(instance, safe='') + '&amp;saved=' + quote(saved_at, safe='')
+    parts = ref.split('/')
+    route = f'/evidence/{quote(owner, safe="")}/{parts[parts.index("evidence") + 1]}' if 'evidence' in parts else f'/metadata/{quote(owner, safe="")}'
+    return f'<a href="{route}{query}" target="_blank" rel="noopener">{escape(label)} ↗</a>'
+
+
+def relations_html(session: dict[str, Any]) -> str:
+    records = session.get("relations", [])
+    labels = {"subAgent": "子 agent", "fork": "分叉", "agentInteraction": "agent 交互", "unknown": "关系类型未知"}
+    body = f'<details class="source" data-key="{escape(session["id"], quote=True)}:relations"><summary>关联会话 · {len(records)} 条关系证据</summary>'
+    for gap in session.get("relationGaps", []):
+        body += f'<p class="gap">{escape(gap)}</p>'
+    if not records:
+        body += '<p>尚未取得关系身份；不能据此认定没有子 agent 或分叉。</p>'
+    for relation in records:
+        target = relation["targetId"]
+        label = labels.get(relation["type"], "关系类型未知")
+        direction = "指向关联目标" if relation["direction"] == "outgoing" else "来自关联来源"
+        body += f'<section class="source"><strong>{label} · {direction} · {escape(target or "目标未知")}</strong>'
+        body += f'<p>来源关系：{escape(relation["fromId"] or "未知")} → {escape(relation["toId"] or "未知")}；依据：{escape(relation["basis"])}；活动：{escape(relation["activity"] or "未知／不适用")}</p>'
+        if relation["availability"] == "archived":
+            href = '/session/' + quote(target, safe='') + '?source=' + quote(relation['sourceInstance'], safe='')
+            body += f'<p><a href="{href}">查看已归档会话 · {escape(target)}</a></p>'
+        else:
+            unavailable = {"unavailable": "来源不可访问／未保存", "notArchived": "尚未归档", "unknown": "目标未知"}
+            body += f'<p>{unavailable.get(relation["availability"], "不可取得")}；没有可打开的归档正文。</p>'
+        if relation["reason"]:
+            body += f'<p class="gap">{escape(relation["reason"])}</p>'
+        if relation.get("metadataEvidenceId"):
+            href = '/relation-evidence/' + quote(relation['metadataEvidenceId'], safe='') + '?source=' + quote(relation['sourceInstance'], safe='')
+            body += f'<a href="{href}" target="_blank" rel="noopener">查看关系来源证据 ↗</a>'
+        else:
+            body += evidence_link(relation["ownerId"], relation["sourceInstance"], relation["savedAt"], relation["ownerEvidenceRef"], "查看关系来源证据")
+        if relation.get("metadataEvidenceId") or relation["ownerEvidenceRef"].startswith("#/session/thread"):
+            body += '<p class="count">会话元数据字段投影；原始列表预览按首次范围规则丢弃，不冒充完整原始响应。</p>'
+        body += '</section>'
+    return body + '</details>'
+
+
+def execution_html(execution: dict[str, Any]) -> str:
+    state = {"exited": "已有退出结果", "running": "仍在运行（来源最后记录；退出结果未知）",
+             "started": "已启动／退出结果未知", "unknown": "退出结果未知"}[execution["state"]]
+    outcome = {"success": "执行成功（退出码 0；业务成功未知）", "failed": "执行失败", "unknown": "执行结果未知"}[execution["outcome"]]
+    key = escape(f'{execution["threadId"]}:{execution["turnId"]}:execution:{execution["id"]}', quote=True)
+    body = f'<details class="message" data-key="{key}"><summary>后台执行证据 · {escape(execution["id"])} · {state}</summary><p>{outcome}；退出码：{escape(display_value(execution["exitCode"]))}</p>'
+    body += '<p class="gap">原子命令条目的保存观察；句柄不证明后台启动，未取得独立轮询记录。每次输出是该次取得的完整累计快照，不拼接为增量输出。业务／任务成功未知。</p>'
+    for index, observation in enumerate(execution["observations"]):
+        body += f'<details class="source" data-key="{key}:observation:{index}"><summary>保存观察 {index + 1} · 来源状态 {escape(str(observation["sourceStatus"]))} · 退出码 {escape(display_value(observation["exitCode"]))}</summary>'
+        body += f'<p class="count">保存时间 {escape(observation["savedAt"])}；观察顺序不代表执行因果。</p>'
+        for label, value in (("来源 PTY 句柄", observation["processId"]), ("命令", observation["command"]),
+                             ("工作目录", observation["cwd"]), ("输出原文（来源合并 stdout / stderr）", observation["output"]), ("错误信息（如来源提供）", observation["error"])):
+            body += f'<h3>{label}</h3><pre>{escape(display_value(value))}</pre>'
+        body += evidence_link(execution["threadId"], execution["sourceInstance"], observation["savedAt"], observation["evidenceRef"], "查看本次执行原始证据") + '</details>'
+    return body + '</details>'
+
+
 def session_body(session: dict[str, Any]) -> str:
     source = session["source"]
     thread = quote(session["id"], safe="")
     query = "?source=" + quote(source["instance"], safe="")
     evidence_query = query + "&amp;saved=" + quote(session["savedAt"], safe="")
     links = "".join(f'<a href="#turn-{i}">回合 {i + 1}</a>' for i, _ in enumerate(session["turns"]))
-    body = f'<div class="heading"><div><a href="/">← 项目列表</a><h1>{escape(session["name"] or session["id"])}</h1><p>来源会话开始：{source_time(session.get("createdAt", session["thread"].get("createdAt")))}</p><p class="count">{len(session["turns"])} 个回合 · {len(session["messages"])} 条用户与 AI 消息 · {len(session.get("tools", []))} 次工具记录 · 任务 03 自动归档 · 分组阅读</p><p class="count">历史证据修订随完整结构化导出保留；首次范围前的回合未回补。</p></div><a class="action" href="/export/{thread}{query}">结构化导出 ↓</a></div>'
+    body = f'<div class="heading"><div><a href="/">← 项目列表</a><h1>{escape(session["name"] or session["id"])}</h1><p>来源会话开始：{source_time(session.get("createdAt", session["thread"].get("createdAt")))}</p><p class="count">{len(session["turns"])} 个回合 · {len(session["messages"])} 条用户与 AI 消息 · {len(session.get("tools", []))} 次工具记录 · 自动归档 · 关联执行证据</p><p class="count">本会话已入库 · 最近保存：{saved_time(session["savedAt"])}。历史证据与修订保留在本机数据库；首次范围前的回合未回补。</p></div></div>'
+    body += f'<p class="count">所属项目：{escape(session.get("project", {}).get("label") or session["thread"].get("cwd") or "项目未知")}</p>'
     body += f'<div class="layout"><aside class="sidebar"><span class="eyebrow">回合索引</span><nav aria-label="回合索引">{links}</nav><p class="muted">按对话与执行过程分组阅读，组内保留来源顺序。分组位置不代表所有事件的原始交错顺序；完整顺序可在导出和原始证据中核对。</p></aside><div>'
+    body += relations_html(session)
     gaps = "".join(f'<li>{escape(gap)}</li>' for gap in source["gaps"])
     body += f'<details class="source" data-key="{thread}:source"><summary>数据源版本与已知缺口</summary><dl><dt>数据源版本</dt><dd>{escape(str(source["version"]))}</dd><dt>保存时间</dt><dd>{escape(session["savedAt"])}</dd><dt>来源实例</dt><dd><code>{escape(source["instance"])}</code></dd><dt>会话身份</dt><dd><code>{escape(session["id"])}</code></dd><dt>已读取</dt><dd>{session["sourceItemCount"]} 条来源条目；完整视图；回合 {source["pagination"]["turnPages"]} 页、条目 {source["pagination"]["itemPages"]} 页</dd><dt>仅存原始证据</dt><dd>{escape(", ".join(source["notDisplayedTypes"]) or "无")}</dd></dl><ul>{gaps}</ul></details>'
     labels = {"commentary": "AI 过程消息", "final_answer": "AI 最终回答"}
@@ -133,16 +195,22 @@ def session_body(session: dict[str, Any]) -> str:
         status = statuses.get(turn.get("status"), "状态未知")
         body += f'<section class="turn" id="turn-{index}"><h2>回合 {index + 1}<span class="turn-status">{status}</span></h2>'
         entries = session["messages"] + session.get("tools", []) + session.get("unsupportedItems", [])
-        execution_html = ""
+        execution_body = ""
         execution_count = 0
+        for execution in session.get("executions", []):
+            if execution["turnId"] == turn["id"]:
+                execution_body += execution_html(execution)
         for message in sorted((m for m in entries if m["turnId"] == turn["id"]), key=lambda m: m["order"]):
             if "association" in message:
-                execution_html += tool_html(message, thread, evidence_query)
+                execution_body += tool_html(message, thread, evidence_query)
                 execution_count += 1
                 continue
             if message["type"] not in ("userMessage", "agentMessage"):
                 evidence_index = message["evidenceRef"].split("/")[2]
-                execution_html += f'<details class="message" data-key="{thread}:{escape(turn["id"], quote=True)}:unsupported:{escape(message["id"], quote=True)}"><summary>不支持的条目 · {escape(message["type"])} · 完整性未知</summary><p>{escape(message["reasons"][0])}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看未支持条目的原始证据 ↗</a><footer><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
+                relation_item = message["type"] in ("subAgentActivity", "collabAgentToolCall")
+                item_label = "会话关系来源" if relation_item else "不支持的条目"
+                reason = "关系见上方关联会话；完整原始载荷仍保留。" if relation_item else message["reasons"][0]
+                execution_body += f'<details class="message" data-key="{thread}:{escape(turn["id"], quote=True)}:unsupported:{escape(message["id"], quote=True)}"><summary>{item_label} · {escape(message["type"])} · 完整性未知</summary><p>{escape(reason)}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看条目原始证据 ↗</a><footer><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
                 execution_count += 1
                 continue
             user = message["type"] == "userMessage"
@@ -155,7 +223,8 @@ def session_body(session: dict[str, Any]) -> str:
             message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
             body += f'<footer><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看原始证据 ↗</a> · 来源时间：{escape(message_time)}<code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}</code></footer></details>'
         if execution_count:
-            body += f'<details class="source execution" data-key="{thread}:{escape(turn["id"], quote=True)}:execution"><summary>执行过程 · {execution_count} 条来源记录</summary><p class="muted">工具与其他非对话条目，按本回合的来源顺序排列；文档正文保留在读取它的工具结果中。</p>{execution_html}</details>'
+            gaps = ''.join(f'<p class="gap">{escape(gap)}</p>' for gap in session.get("executionGaps", []))
+            body += f'<details class="source execution" data-key="{thread}:{escape(turn["id"], quote=True)}:execution"><summary>执行过程 · {execution_count} 条来源记录</summary><p class="muted">后台执行证据在前汇集保存观察，其后原始工具与其他条目按本回合来源顺序排列；文档正文保留在读取它的工具结果中。</p>{gaps}{execution_body}</details>'
         body += '</section>'
     return body + '</div></div>'
 
@@ -180,13 +249,14 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 return
             url = urlsplit(self.path)
             segments = [unquote(p) for p in url.path.strip("/").split("/")]
-            instance = parse_qs(url.query).get("source", [None])[0]
+            options = parse_qs(url.query)
+            instance = options.get("source", [None])[0]
             try:
                 if url.path == "/":
                     projects = app.projects()
                     items = ''.join(f'<li><h2><a href="/project/{p["id"]}">{escape(p["label"])}</a></h2><p>{len(p["sessions"])} 个已保存会话 · 归属依据：{escape(p["basis"])}</p></li>' for p in projects)
                     empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见上方。</p></div>' if not items else ""
-                    self.respond(200, "text/html", page("项目归档", collection_html(status()) + '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty))
+                    self.respond(200, "text/html", page("项目归档", collection_html(status(), str(app.database)) + '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty))
                 elif url.path == "/live.js":
                     self.respond(200, "text/javascript", LIVE_SCRIPT)
                 elif url.path == "/api/status":
@@ -200,7 +270,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     project = next((p for p in app.projects() if p["id"] == segments[1]), None)
                     if project is None:
                         raise KeyError("项目尚未保存")
-                    content = collection_html(status()) + f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序完整排列。未知时间在后，同时间以来源实例、会话 ID 排序。</p>'
+                    content = collection_html(status(), str(app.database)) + f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序完整排列。未知时间在后，同时间以来源实例、会话 ID 排序。</p>'
                     for summary in project["sessions"]:
                         session = app.session(summary["id"], summary["source"]["instance"])
                         # Each session retains its own whole timeline and unique turn anchors.
@@ -214,9 +284,14 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif len(segments) == 3 and segments[:2] == ["api", "session"]:
                     self.respond(200, "application/json", json.dumps(app.session(segments[2], instance), ensure_ascii=False))
                 elif len(segments) == 2 and segments[0] == "session":
-                    self.respond(200, "text/html", page("原文时间线", collection_html(status()) + session_body(app.session(segments[1], instance))))
+                    self.respond(200, "text/html", page("原文时间线", collection_html(status(), str(app.database)) + session_body(app.session(segments[1], instance))))
                 elif len(segments) == 2 and segments[0] == "export":
-                    self.respond(200, "application/json", app.export_session(segments[1], instance), download=True)
+                    self.respond(200, "application/json", app.export_session(segments[1], instance, options.get("related") == ["1"]), download=True)
+                elif len(segments) == 2 and segments[0] == "metadata":
+                    self.respond(200, "application/json", json.dumps(app.metadata(segments[1], instance,
+                        options.get("saved", [None])[0]), ensure_ascii=False, indent=2))
+                elif len(segments) == 2 and segments[0] == "relation-evidence":
+                    self.respond(200, "application/json", json.dumps(app.relation_evidence(segments[1], instance), ensure_ascii=False, indent=2))
                 elif len(segments) == 3 and segments[0] == "evidence" and segments[2].isdigit():
                     saved_at = parse_qs(url.query).get("saved", [None])[0]
                     evidence = app.evidence(segments[1], int(segments[2]), instance, saved_at)

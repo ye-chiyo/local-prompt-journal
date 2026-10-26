@@ -89,6 +89,7 @@ def main() -> int:
         command.add_argument("--source-instance")
         if name == "export":
             command.add_argument("--output", type=Path, required=True)
+            command.add_argument("--include-related", action="store_true", help="显式包含一层已保存关联会话；不递归读取来源")
     server = commands.add_parser("serve", help="在 127.0.0.1 打开只读查看服务；Ctrl+C 关闭")
     server.add_argument("--port", type=int, default=8765)
     runner = commands.add_parser("run", help="启动自动发现、持续采集与本机页面；Ctrl+C 停止")
@@ -115,7 +116,7 @@ def main() -> int:
         elif args.command == "show":
             print(json.dumps(app.session(args.thread_id, args.source_instance), ensure_ascii=False, indent=2))
         elif args.command == "export":
-            write_export(args.output, app.export_session(args.thread_id, args.source_instance))
+            write_export(args.output, app.export_session(args.thread_id, args.source_instance, args.include_related))
             print(json.dumps({"saved": str(args.output.resolve())}, ensure_ascii=False))
         elif args.command in ("serve", "run"):
             collector = Collector(app, interval=args.interval, enabled_at=time.time() if args.start_from_now else None) if args.command == "run" else None

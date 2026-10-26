@@ -212,7 +212,8 @@ class CodexHistory:
                 "sourceKinds": ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
                                 "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"]})
             for entry, _ in entries:
-                sessions[entry["id"]] = {k: entry[k] for k in ("id", "name", "cwd", "projectId", "createdAt", "updatedAt", "status") if k in entry}
+                sessions[entry["id"]] = {k: entry[k] for k in ("id", "name", "cwd", "projectId", "createdAt", "updatedAt", "status",
+                    "source", "parentThreadId", "forkedFromId", "agentNickname", "agentRole") if k in entry}
         self.evidence = []
         return list(sessions.values())
 
@@ -239,6 +240,7 @@ class CodexHistory:
         return {"thread": metadata, "turns": selected, "items": items,
                 "source": {"instance": self.instance(), "version": self.identity.get("userAgent"),
                     "transport": "app-server stdio", "identity": self.identity,
+                    "metadataProvenance": "thread/list 正式字段投影；已丢弃 preview 等字段，不是完整原始列表响应。",
                     "scope": {"enabledAt": enabled_at, "policy": "turns-starting-from-enablement",
                               "excludedTurnCount": len(turns) - len(selected)},
                     "networkPolicy": "inherited proxies replaced with a reserved non-listening loopback port"},

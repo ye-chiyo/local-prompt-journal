@@ -9,7 +9,8 @@ import hashlib
 from typing import Any
 
 from .source import CodexHistory, HistoryError, now
-from .tool_evidence import TOOL_TYPES, tool_record
+from .tool_evidence import TOOL_TYPES, tool_record, require_command_exit
+from .topology import EXECUTION_GAPS, RELATION_GAPS, executions, relocate, relation_records
 
 
 def default_data_dir() -> Path:
@@ -168,10 +169,21 @@ class Journal:
         return json.loads(rows[0][1])
 
     def session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
-        return self._package(thread_id, instance)["session"]
+        return self._view_package(thread_id, instance)["session"]
 
     def evidence(self, thread_id: str, index: int, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         return self._package(thread_id, instance, saved_at)["evidence"][index]
+
+    def metadata(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
+        session = self._package(thread_id, instance, saved_at)["session"]
+        return {"thread": session["thread"], "provenance": session["source"].get("metadataProvenance",
+            "已保存的来源会话元数据；完整 thread/read 原始响应如已取得，可从导出 evidence 核对。")}
+
+    def relation_evidence(self, identity: str, instance: str | None = None) -> dict[str, Any]:
+        for entry in self.collection_state().get("relationMetadata", []):
+            if entry["id"] == identity and (instance is None or entry["sourceInstance"] == instance):
+                return entry
+        raise KeyError("未保存此关系元数据投影。")
 
     def sessions(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as db:
@@ -200,18 +212,112 @@ class Journal:
         with closing(self._connect()) as db, db:
             db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('collector',?)", (json.dumps(state, ensure_ascii=False),))
 
-    def export_session(self, thread_id: str, instance: str | None = None) -> str:
+    def _view_package(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         package = self._package(thread_id, instance)
         with closing(self._connect()) as db:
             rows = db.execute("SELECT package FROM snapshots WHERE thread=? AND instance=? ORDER BY number",
                               (thread_id, package["session"]["source"]["instance"])).fetchall()
+        # Use one coherent history if the collector saved again after _package.
+        package = json.loads(rows[-1][0])
+        for tool in package["session"].get("tools", []):
+            require_command_exit(tool)
         revisions = [json.loads(row[0]) for row in rows[:-1]]
-        for index, revision in enumerate(revisions):
-            for group in ("messages", "tools", "unsupportedItems"):
-                for entry in revision["session"].get(group, []):
-                    entry["evidenceRef"] = entry["evidenceRef"].replace("#/evidence/", f"#/revisions/{index}/evidence/", 1)
+        package["session"]["executions"] = executions(revisions + [package])
+        package["session"]["executionGaps"] = EXECUTION_GAPS
+        package["session"]["relations"] = self._relations(package)
+        metadata_ids = {r["metadataEvidenceId"] for r in package["session"]["relations"] if r.get("metadataEvidenceId")}
+        if metadata_ids:
+            package["relationEvidence"] = {identity: self.relation_evidence(identity, package["session"]["source"]["instance"])
+                                           for identity in metadata_ids}
+        package["session"]["relationGaps"] = RELATION_GAPS
         if revisions:
-            package["revisions"] = revisions
+            package["revisions"] = [relocate(revision, f"#/revisions/{index}") for index, revision in enumerate(revisions)]
+        return package
+
+    def _relations(self, package: dict[str, Any]) -> list[dict[str, Any]]:
+        current = package["session"]
+        instance, thread_id = current["source"]["instance"], current["id"]
+        summaries = {(s["source"]["instance"], s["id"]): s for s in self.sessions()}
+        state = self.collection_state()
+        statuses = {s["id"]: s for s in state.get("sessions", []) if s.get("source") == instance}
+        candidates = []
+        for (source_instance, identity), _ in summaries.items():
+            if source_instance != instance:
+                continue
+            owner = package if identity == thread_id else self._package(identity, instance)
+            candidates.extend(relation_records(owner))
+        known_relations = {(r["ownerId"], r["type"], r["fromId"], r["toId"], r["basis"]) for r in candidates}
+        for evidence in state.get("relationMetadata", []):
+            if evidence["sourceInstance"] != instance:
+                continue
+            owner = {"session": {"id": evidence["thread"]["id"], "thread": evidence["thread"],
+                     "source": {"instance": instance}, "savedAt": evidence["observedAt"]}, "evidence": []}
+            for record in relation_records(owner):
+                identity_key = (record["ownerId"], record["type"], record["fromId"], record["toId"], record["basis"])
+                if identity_key in known_relations:
+                    continue
+                known_relations.add(identity_key)
+                record["metadataEvidenceId"] = evidence["id"]
+                record["evidenceRef"] = f'#/relationEvidence/{evidence["id"]}/thread'
+                candidates.append(record)
+        records = []
+        for record in candidates:
+            if thread_id not in (record["fromId"], record["toId"], record["ownerId"]):
+                continue
+            outgoing = record["fromId"] == thread_id
+            target = record["toId"] if outgoing else record["fromId"]
+            saved = summaries.get((instance, target))
+            status = statuses.get(target, {})
+            availability = "archived" if saved else "unavailable" if status.get("error") else "notArchived" if target else "unknown"
+            reason = record["reason"]
+            if not saved:
+                detail = status.get("error") or ("目标不在已启用的正文采集范围内；仅保存已取得的关系元数据，不补读正文。"
+                    if status.get("status") == "outsideScope" else "目标尚未获授权归档，可能在启用范围外、不可见或来源未提供；不读取正文。")
+                reason += " " + (detail if target else "目标身份未知。")
+            elif status.get("error"):
+                reason += " 来源当前不可访问；只能查看已保存快照：" + status["error"]
+            evidence_included = record["ownerId"] == thread_id or bool(record.get("metadataEvidenceId"))
+            records.append({**record, "ownerEvidenceRef": record["evidenceRef"],
+                            "evidenceRef": record["evidenceRef"] if evidence_included else None,
+                            "evidenceUnavailableReason": None if evidence_included else "关系证据位于另一归档会话；当前单会话文档未包含。",
+                            "targetId": target, "direction": "outgoing" if outgoing else "incoming",
+                            "availability": availability, "reason": reason.strip()})
+        return records
+
+    def export_session(self, thread_id: str, instance: str | None = None, include_related: bool = False) -> str:
+        package = self._view_package(thread_id, instance)
+        instance = package["session"]["source"]["instance"]
+        included = {thread_id: "#"}
+        if include_related:
+            identities = sorted({r["targetId"] for r in package["session"]["relations"]
+                                 if r["availability"] == "archived" and r["targetId"] != thread_id})
+            package["related"] = []
+            for identity in identities:
+                prefix = f'#/related/{len(package["related"])}'
+                included[identity] = prefix
+                package["related"].append(relocate(self._view_package(identity, instance), prefix))
+        omitted = []
+        documents = {p["session"]["id"]: p for p in [package] + package.get("related", [])}
+        for document in documents.values():
+            for relation in document["session"]["relations"]:
+                if not relation.get("metadataEvidenceId"):
+                    owner_prefix = included.get(relation["ownerId"])
+                    owner = documents.get(relation["ownerId"])
+                    if owner and owner["session"]["savedAt"] != relation["savedAt"]:
+                        revision_index = next((i for i, r in enumerate(owner.get("revisions", []))
+                                               if r["session"]["savedAt"] == relation["savedAt"]), None)
+                        owner_prefix = f'{owner_prefix}/revisions/{revision_index}' if revision_index is not None else None
+                    relation["evidenceRef"] = owner_prefix + relation["ownerEvidenceRef"][1:] if owner_prefix else None
+                    relation["evidenceUnavailableReason"] = (None if owner_prefix else
+                        "该关系的所有者保存版本未包含；不能使用另一版本的证据位置。" if owner else
+                        "关系证据位于另一归档会话；当前单会话文档未包含。")
+                if relation["targetId"] not in included:
+                    reason = relation["availability"] if relation["availability"] != "archived" else "beyondOneHop" if include_related else "notSelected"
+                    omitted.append({"fromSession": document["session"]["id"], "targetId": relation["targetId"],
+                                    "type": relation["type"], "reason": reason, "detail": relation["reason"]})
+        package["exportScope"] = {"mode": "oneHopArchived" if include_related else "single", "sourceInstance": instance,
+            "included": list(included), "omitted": omitted,
+            "note": "仅包含此会话及显式选择的一层已归档关联会话（含父／子／分叉／交互）；不递归、不连接来源，不读取未归档目标。外部会话的证据未包含时 evidenceRef=null，ownerEvidenceRef 仅定位该所有者自己的保存文档。"}
         return json.dumps(package, ensure_ascii=False, indent=2)
 
 

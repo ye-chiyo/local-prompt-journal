@@ -29,12 +29,14 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def test_timeline_shows_phases_gaps_and_safe_links_to_raw_evidence_and_export(self):
+    def test_timeline_shows_local_database_saved_state_and_safe_evidence_links(self):
         with urlopen(self.url + "/session/sample-session") as response:
             html = response.read().decode()
             self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
-        for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", "阶段未知", "附件尚未备份", "fixture-1", "结构化导出"):
+        for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", "阶段未知", "附件尚未备份", "fixture-1", "自动保存到本机数据库", "本会话已入库", str(self.app.database)):
             self.assertIn(text, html)
+        self.assertNotIn("选择导出范围", html)
+        self.assertNotIn('href="/export/', html)
         self.assertNotIn("<script>不会执行历史代码</script>", html)
         self.assertIn("&lt;script&gt;不会执行历史代码&lt;/script&gt;", html)
         with urlopen(self.url + "/api/session/sample-session") as response:
