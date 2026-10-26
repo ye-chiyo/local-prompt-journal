@@ -505,9 +505,10 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif url.path == "/":
                     projects = app.projects()
                     items = ''.join(f'<li><h2><a href="/project/{p["id"]}">{escape(p["label"])}</a></h2><p>{len(p["sessions"])} 个已保存会话 · 归属依据：{escape(p["basis"])}</p></li>' for p in projects)
-                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见下方。</p></div>' if not items else ""
+                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见上方。</p></div>' if not items else ""
                     archive = '<h1>项目归档</h1><p class="muted">同项目按会话开始时间升序，完整阅读每段会话。未知时间排在已知时间后；时间相同或未知时按来源实例、会话 ID 排序。较早会话更新不改变位置。</p><ul class="session-list">' + items + '</ul>' + empty
-                    self.respond(200, "text/html", page("项目归档", archive + search_form(app) + collection_html(status(), str(app.database))))
+                    content = collection_html(status(), str(app.database)) + archive + search_form(app)
+                    self.respond(200, "text/html", page("项目归档", content))
                 elif url.path in ("/search", "/api/search"):
                     values = {key: value[0] for key, value in options.items()}
                     scope = values.get("scope", "")
@@ -524,7 +525,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     else:
                         content = collection_html(status(), str(app.database)) + '<a href="/">← 项目列表</a><h1>正文搜索</h1>'
                         content += search_form(app, result["query"], result["scope"]["project"], scope)
-                        self.respond(200, "text/html", page("正文搜索", content + search_results(result, values)))
+                        content += search_results(result, values)
+                        self.respond(200, "text/html", page("正文搜索", content))
                 elif url.path == "/live.js":
                     self.respond(200, "text/javascript", LIVE_SCRIPT)
                 elif url.path == "/api/status":
@@ -538,7 +540,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     project = next((p for p in app.projects() if p["id"] == segments[1]), None)
                     if project is None:
                         raise KeyError("项目尚未保存")
-                    content = f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序排列。打开单个会话后阅读完整正文、工具结果和原始证据。</p><ul class="session-list">'
+                    content = collection_html(status(), str(app.database))
+                    content += f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序排列。打开单个会话后阅读完整正文、工具结果和原始证据。</p><ul class="session-list">'
                     for summary in project["sessions"]:
                         href = '/session/' + quote(summary["id"], safe="") + '?' + urlencode({"source": summary["source"]["instance"]})
                         name = summary["name"] or summary["id"]
@@ -547,7 +550,6 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                                     f'<p class="count">来源实例：<code>{escape(summary["source"]["instance"])}</code></p></li>')
                     content += '</ul>'
                     content += search_form(app, project_id=project["id"])
-                    content += collection_html(status(), str(app.database))
                     self.respond(200, "text/html", page(project["label"], content))
                 elif url.path == "/api/sessions":
                     self.respond(200, "application/json", json.dumps(app.sessions(), ensure_ascii=False))
@@ -583,13 +585,15 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     saved = options.get("saved", [None])[0]
                     session = app.session(segments[1], instance, saved)
                     scope = json.dumps([session["source"]["instance"], session["id"]])
-                    content = collection_html(status(), str(app.database)) + search_form(app, scope=scope)
                     delete_href = '/manage/delete/' + quote(session['id'], safe='') + '?' + urlencode({'source': session['source']['instance']})
+                    content = collection_html(status(), str(app.database))
                     content += f'<p><a href="{escape(delete_href, quote=True)}">删除此会话的受管理日志</a></p>'
                     if saved:
                         href = '/session/' + quote(session["id"], safe='') + '?' + urlencode({"source": session["source"]["instance"]})
                         content += f'<p class="source">正在查看命中时的保存版本 {escape(saved)}；原文与证据固定在该版本。<a href="{escape(href, quote=True)}">查看会话最新保存内容</a></p>'
-                    self.respond(200, "text/html", page("原文时间线", content + session_body(session)))
+                    content += session_body(session)
+                    content += search_form(app, scope=scope)
+                    self.respond(200, "text/html", page("原文时间线", content))
                 elif len(segments) == 2 and segments[0] == "export":
                     self.respond(200, "application/json", app.export_session(segments[1], instance, options.get("related") == ["1"]), download=True)
                 elif len(segments) == 2 and segments[0] == "bundle":

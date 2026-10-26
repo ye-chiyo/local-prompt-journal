@@ -40,6 +40,8 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertNotIn('href="/export/', html)
         self.assertNotIn("<script>不会执行历史代码</script>", html)
         self.assertIn("&lt;script&gt;不会执行历史代码&lt;/script&gt;", html)
+        self.assertLess(html.index("自动保存到本机数据库"), html.index("本会话已入库"))
+        self.assertLess(html.index("本会话已入库"), html.index("搜索已保存正文"))
         with urlopen(self.url + "/api/session/sample-session") as response:
             view = json.load(response)
         with urlopen(self.url + "/export/sample-session") as response:
@@ -67,8 +69,14 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertIn('/session/sample-session?source=', html)
         self.assertNotIn("请记录原文。", html)
         self.assertNotIn("正在核对中文。", html)
+        self.assertLess(html.index("自动保存到本机数据库"), html.index("中文验收样本"))
         self.assertLess(html.index("中文验收样本"), html.index("搜索已保存正文"))
-        self.assertLess(html.index("搜索已保存正文"), html.index("自动保存到本机数据库"))
+
+    def test_search_page_places_database_status_before_search_results(self):
+        with urlopen(self.url + "/search?q=%E8%AF%B7%E8%AE%B0%E5%BD%95") as response:
+            html = response.read().decode()
+        self.assertLess(html.index("自动保存到本机数据库"), html.index("aria-label=\"搜索已保存正文\""))
+        self.assertLess(html.index("自动保存到本机数据库"), html.index("请记录原文。"))
 
     def test_large_message_is_loaded_on_expand_without_initial_html(self):
         large = "大文本原文-" + ("x" * 70_000)
