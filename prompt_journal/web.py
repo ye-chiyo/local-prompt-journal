@@ -32,8 +32,11 @@ main{max-width:1240px;margin:30px auto;padding:0 24px}h1{font-size:30px;line-hei
 
 
 STYLE += """
-.search-form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.search-form label{display:grid;gap:4px;min-width:0;max-width:100%}.search-form input,.search-form select,.search-form button{font:inherit;padding:7px;max-width:100%}.search-form input{width:320px}.search-form select{width:280px}.search-form button{cursor:pointer;background:var(--accent);color:white;border:0;padding:9px 20px}mark{background:#ffdf80;color:#172b3a}.message:target{outline:3px solid var(--accent)}.search-result pre{white-space:pre-wrap;overflow-wrap:anywhere}.search-result{overflow-wrap:anywhere}
+.search-form{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.search-form label{display:grid;gap:4px;min-width:0;max-width:100%}.search-form input,.search-form select,.search-form button{font:inherit;padding:7px;max-width:100%}.search-form input{width:320px}.search-form select{width:280px}.search-form button{cursor:pointer;background:var(--accent);color:white;border:0;padding:9px 20px}mark{background:#ffdf80;color:#172b3a}.message:target{outline:3px solid var(--accent)}.search-result pre{white-space:pre-wrap;overflow-wrap:anywhere}.search-result{overflow-wrap:anywhere}.lazy-content{color:var(--muted);font-style:italic}
 """
+
+
+LAZY_TEXT_LIMIT = 64 * 1024
 
 
 def page(title: str, body: str) -> str:
@@ -42,13 +45,33 @@ def page(title: str, body: str) -> str:
 
 LIVE_SCRIPT = """
 let version = null;
-function locateHit() {
+async function loadLazyContent(node) {
+  if (!node?.dataset.lazyUrl || node.dataset.lazyLoaded === 'true') return;
+  node.dataset.lazyLoaded = 'loading';
+  try {
+    const response = await fetch(node.dataset.lazyUrl);
+    if (!response.ok) throw new Error();
+    const payload = await response.json();
+    node.textContent = payload.text;
+    node.classList.remove('lazy-content');
+    node.dataset.lazyLoaded = 'true';
+  } catch {
+    node.textContent = '原文加载失败；请重试或打开原始证据。';
+    node.dataset.lazyLoaded = 'error';
+  }
+}
+async function loadLazyInDetails(details) {
+  if (!details) return;
+  for (const node of details.querySelectorAll(':scope > [data-lazy-url]')) await loadLazyContent(node);
+}
+async function locateHit() {
   const params = new URLSearchParams(location.search);
   const target = document.getElementById(params.get('target'));
   if (!target) return;
   for (let node = target; node; node = node.parentElement) {
     if (node.tagName === 'DETAILS') node.open = true;
   }
+  await loadLazyInDetails(target.closest('details'));
   const query = params.get('q');
   let focus = target;
   if (query) for (const pre of target.querySelectorAll('pre[data-search]')) {
@@ -63,6 +86,9 @@ function locateHit() {
   }
   focus.scrollIntoView({block:'center'});
 }
+document.addEventListener('toggle', event => {
+  if (event.target instanceof HTMLDetailsElement && event.target.open) loadLazyInDetails(event.target);
+}, true);
 window.addEventListener('load', () => requestAnimationFrame(locateHit), {once:true});
 async function update() {
   try {
@@ -140,7 +166,30 @@ def display_value(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def tool_html(tool: dict[str, Any], thread: str, query: str) -> str:
+def lazy_pre(url: str, field: str, label: str) -> str:
+    return (f'<pre class="lazy-content" data-search="{escape(field, quote=True)}" '
+            f'data-lazy-url="{escape(url, quote=True)}">{escape(label)}</pre>')
+
+
+def value_pre(value: Any, url: str, field: str = "") -> str:
+    text = display_value(value)
+    if len(text) > LAZY_TEXT_LIMIT:
+        return lazy_pre(url, field, "原文较大，展开后加载完整内容。")
+    attribute = f' data-search="{escape(field, quote=True)}"' if field else ''
+    return f'<pre{attribute}>{escape(text)}</pre>'
+
+
+def build_lazy_url(thread: str, item: str, instance: str, kind: str, field: str,
+                   saved_at: str | None = None, text_index: int | None = None) -> str:
+    query = {"source": instance, "kind": kind, "field": field}
+    if saved_at:
+        query["saved"] = saved_at
+    if text_index is not None:
+        query["textIndex"] = str(text_index)
+    return f'/api/session/{quote(thread, safe="")}/item/{quote(item, safe="")}?{urlencode(query)}'
+
+
+def tool_html(tool: dict[str, Any], thread: str, instance: str, query: str, saved_at: str | None = None) -> str:
     statuses = {"completed": "执行已完成（不代表业务成功）", "failed": "执行失败", "inProgress": "进行中（未取得最终结果）", "declined": "已拒绝", "unknown": "状态未知"}
     name = ".".join(str(v) for v in (tool["namespace"], tool["name"]) if v is not None)
     body = f'<details class="message tool" data-key="{thread}:{escape(tool["turnId"], quote=True)}:tool:{escape(tool["id"], quote=True)}" data-tool-id="{escape(tool["id"], quote=True)}"><summary><span class="label">工具执行 · {escape(name or "名称未知")}</span><span class="phase">{statuses[tool["status"]]} · {"部分内容" if tool["completeness"] == "partial" else "完整性未知"}</span></summary>'
@@ -149,13 +198,19 @@ def tool_html(tool: dict[str, Any], thread: str, query: str) -> str:
                          ("开始时间（来源 Unix 毫秒）", tool["startedAtMs"]), ("结束时间（来源 Unix 毫秒）", tool["completedAtMs"]),
                          ("参数（来源已提供）", "null" if tool.get("argumentsAvailable") and tool["arguments"] is None else tool["arguments"]), ("结果原文（已取得的全部内容）", tool["result"]),
                          ("错误信息", tool["error"]), ("来源 success 字段", tool["sourceSuccess"])):
-        field = ('result' if label == '结果原文（已取得的全部内容）' else 'error' if label == '错误信息' else '') if isinstance(value, str) else ''
-        attribute = f' data-search="{field}"' if field else ''
-        body += f'<h3>{label}</h3><pre{attribute}>{escape(display_value(value))}</pre>'
+        field = ('result' if label == '结果原文（已取得的全部内容）' else
+                 'error' if label == '错误信息' else
+                 'arguments' if label == '参数（来源已提供）' else '')
+        lazy_url = build_lazy_url(thread, tool["id"], instance, "tool", field or "value", saved_at)
+        body += f'<h3>{label}</h3>{value_pre(value, lazy_url, field if field in ("result", "error") else "")}'
+    text_indices = {"result": 0, "error": 0}
     for field, text in searchable_fields(tool, "tool"):
         if not isinstance(tool.get(field), str):
             label = '结果' if field == 'result' else '错误'
-            body += f'<h3>{label}中的文本原文</h3><pre data-search="{field}">{escape(text)}</pre>'
+            text_index = text_indices[field]
+            text_indices[field] += 1
+            lazy_url = build_lazy_url(thread, tool["id"], instance, "tool", field + "Text", saved_at, text_index)
+            body += f'<h3>{label}中的文本原文</h3>{value_pre(text, lazy_url, field)}'
     body += '<p class="gap">业务／任务成功：未知。嵌套调用未独立返回时，不从文本推造调用树。</p>'
     body += ''.join(f'<p class="gap">{escape(r)}</p>' for r in tool["reasons"])
     index = tool["evidenceRef"].split("/")[2]
@@ -212,9 +267,12 @@ def execution_html(execution: dict[str, Any]) -> str:
     for index, observation in enumerate(execution["observations"]):
         body += f'<details class="source" data-key="{key}:observation:{index}"><summary>保存观察 {index + 1} · 来源状态 {escape(str(observation["sourceStatus"]))} · 退出码 {escape(display_value(observation["exitCode"]))}</summary>'
         body += f'<p class="count">保存时间 {escape(observation["savedAt"])}；观察顺序不代表执行因果。</p>'
-        for label, value in (("来源 PTY 句柄", observation["processId"]), ("命令", observation["command"]),
-                             ("工作目录", observation["cwd"]), ("输出原文（来源合并 stdout / stderr）", observation["output"]), ("错误信息（如来源提供）", observation["error"])):
-            body += f'<h3>{label}</h3><pre>{escape(display_value(value))}</pre>'
+        for field, label, value in (("processId", "来源 PTY 句柄", observation["processId"]), ("command", "命令", observation["command"]),
+                                    ("cwd", "工作目录", observation["cwd"]), ("output", "输出原文（来源合并 stdout / stderr）", observation["output"]),
+                                    ("error", "错误信息（如来源提供）", observation["error"])):
+            lazy = build_lazy_url(execution["threadId"], execution["id"], execution["sourceInstance"], "execution", field, observation["savedAt"])
+            lazy += "&observation=" + quote(str(index), safe="")
+            body += f'<h3>{label}</h3>{value_pre(value, lazy, field if isinstance(value, str) else "")}'
         body += evidence_link(execution["threadId"], execution["sourceInstance"], observation["savedAt"], observation["evidenceRef"], "查看本次执行原始证据") + '</details>'
     return body + '</details>'
 
@@ -263,7 +321,7 @@ def session_body(session: dict[str, Any]) -> str:
         for message in sorted((m for m in entries if m["turnId"] == turn["id"]), key=lambda m: m["order"]):
             if "association" in message:
                 anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "tool")
-                execution_body += tool_html(message, thread, evidence_query).replace('</footer>', '</footer>' + attachments_html(session, message)).replace('<details ', f'<details id="{anchor}" ', 1)
+                execution_body += tool_html(message, thread, source["instance"], evidence_query, session.get("savedAt")).replace('</footer>', '</footer>' + attachments_html(session, message)).replace('<details ', f'<details id="{anchor}" ', 1)
                 execution_count += 1
                 continue
             if message["type"] not in ("userMessage", "agentMessage"):
@@ -280,7 +338,10 @@ def session_body(session: dict[str, Any]) -> str:
             evidence_index = message["evidenceRef"].split("/")[2]
             completeness = {"complete": "已取得文本", "partial": "部分内容", "unknown": "完整性未知"}[message["completeness"]]
             anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "message")
-            body += f'<details id="{anchor}" open data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary><pre data-search="text">{escape(message["text"])}</pre>'
+            lazy_url = build_lazy_url(thread, message["id"], source["instance"], "message", "text", session.get("savedAt"))
+            open_attribute = '' if len(message["text"]) > LAZY_TEXT_LIMIT else ' open'
+            message_text = value_pre(message["text"], lazy_url, 'text')
+            body += f'<details id="{anchor}"{open_attribute} data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary>{message_text}'
             for reason in message["reasons"]:
                 body += f'<p class="gap">{escape(reason)}</p>'
             body += attachments_html(session, message)
@@ -490,6 +551,32 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     self.respond(200, "application/json", json.dumps(app.sessions(), ensure_ascii=False))
                 elif len(segments) == 3 and segments[:2] == ["api", "session"]:
                     self.respond(200, "application/json", json.dumps(app.session(segments[2], instance), ensure_ascii=False))
+                elif len(segments) == 5 and segments[:2] == ["api", "session"] and segments[3] == "item":
+                    session = app.session(segments[2], instance, options.get("saved", [None])[0])
+                    identity, kind, field = segments[4], options.get("kind", [""])[0], options.get("field", [""])[0]
+                    entries = session.get("messages", []) if kind == "message" else session.get("tools", []) if kind == "tool" else []
+                    entry = next((item for item in entries if item["id"] == identity), {})
+                    if kind == "execution":
+                        execution: dict[str, Any] = next((item for item in session.get("executions", []) if item["id"] == identity), {})
+                        observation_index = int(options.get("observation", ["-1"])[0])
+                        observations = execution.get("observations", [])
+                        entry = observations[observation_index] if 0 <= observation_index < len(observations) else {}
+                    if not entry:
+                        raise KeyError("本机未保存这个条目。")
+                    if kind == "message" and field == "text":
+                        value = entry["text"]
+                    elif kind in ("tool", "execution") and field in (("arguments", "result", "error") if kind == "tool" else ("processId", "command", "cwd", "output", "error")):
+                        value = display_value(entry[field])
+                    elif kind == "tool" and field in ("resultText", "errorText"):
+                        source_field = field.removesuffix("Text")
+                        text_index = int(options.get("textIndex", ["-1"])[0])
+                        text_values = [text for actual_field, text in searchable_fields(entry, "tool") if actual_field == source_field]
+                        if not 0 <= text_index < len(text_values):
+                            raise KeyError("本机未保存这个文本字段。")
+                        value = text_values[text_index]
+                    else:
+                        raise KeyError("不支持的原文字段。")
+                    self.respond(200, "application/json", json.dumps({"text": value}, ensure_ascii=False))
                 elif len(segments) == 2 and segments[0] == "session":
                     saved = options.get("saved", [None])[0]
                     session = app.session(segments[1], instance, saved)
