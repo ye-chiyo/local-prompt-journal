@@ -6,7 +6,24 @@
 
 任务 03、04 合并为[多项目自动归档与持续同步](.scratch/local-prompt-journal/issues/03-capture-scope.md)，见[决策记录](docs/adr/0001-automatic-project-archive.md)。首次范围已确认：从启用后的下一个新回合开始，旧会话随后新开的回合也自动采集；跨启用时刻的旧回合及更早正文不回补。已经授权保存的旧记录继续保留。Windows 登录自启动未获确认，本应用不安装启动项。
 
-运行环境：Windows、Python 3.12+、桌面捆绑的 `codex.exe` 位于 PATH。应用只使用 Python 标准库；不需要 API key、模型服务、npm 安装或远端数据库。真实验收版本及限制见 [验证记录](docs/verification/01-single-session-proof.md)。
+运行环境：Windows、Python 3.12+、桌面版 Codex。应用只使用 Python 标准库；不需要 API key、模型服务、npm 安装或远端数据库。真实验收版本及限制见 [验证记录](docs/verification/01-single-session-proof.md)。
+
+### Codex 可执行文件查找
+
+自动采集启动只读 Codex App Server 时，会按以下顺序查找可执行文件：
+
+1. 环境变量 `CODEX_EXECUTABLE` 指定的文件（适合自定义安装位置）。
+2. 当前进程 `PATH` 中的 `codex` 或 `codex.exe`。
+3. Windows 桌面捆绑目录 `%LOCALAPPDATA%/OpenAI/Codex/bin/<版本>/codex.exe` 中最近修改的文件。
+
+因此，桌面版 Codex 更新版本或服务进程继承旧 `PATH` 时，通常无需手动修改 `PATH`。也可以显式指定路径：
+
+```powershell
+$env:CODEX_EXECUTABLE = 'C:\Users\你的用户名\AppData\Local\OpenAI\Codex\bin\<版本>\codex.exe'
+python -m prompt_journal run --port 8766
+```
+
+`CODEX_EXECUTABLE` 必须指向实际存在的文件。修改环境变量或更新 Codex 后，需要停止并重新启动本应用服务；已经运行的进程不会自动刷新环境变量。若仍无法找到来源，请先运行 `Get-Command codex`，检查显式路径和 `%LOCALAPPDATA%/OpenAI/Codex/bin/` 下是否存在 `codex.exe`，再查看页面中的来源错误。
 
 ## 使用
 
