@@ -59,6 +59,17 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             urlopen(self.url + "/session/missing")
         self.assertEqual(error.exception.code, 404)
 
+    def test_project_page_lists_sessions_without_rendering_each_full_timeline(self):
+        project_id = self.app.projects()[0]["id"]
+        with urlopen(self.url + "/project/" + project_id) as response:
+            html = response.read().decode()
+        self.assertIn("中文验收样本", html)
+        self.assertIn('/session/sample-session?source=', html)
+        self.assertNotIn("请记录原文。", html)
+        self.assertNotIn("正在核对中文。", html)
+        self.assertLess(html.index("中文验收样本"), html.index("搜索已保存正文"))
+        self.assertLess(html.index("搜索已保存正文"), html.index("自动保存到本机数据库"))
+
     def test_large_message_is_loaded_on_expand_without_initial_html(self):
         large = "大文本原文-" + ("x" * 70_000)
         tool_large = "工具结果原文-" + ("y" * 70_000)

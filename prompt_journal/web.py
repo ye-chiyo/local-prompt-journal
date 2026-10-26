@@ -538,14 +538,16 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     project = next((p for p in app.projects() if p["id"] == segments[1]), None)
                     if project is None:
                         raise KeyError("项目尚未保存")
-                    content = collection_html(status(), str(app.database)) + search_form(app, project_id=project["id"]) + f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序完整排列。未知时间在后，同时间以来源实例、会话 ID 排序。</p>'
+                    content = f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序排列。打开单个会话后阅读完整正文、工具结果和原始证据。</p><ul class="session-list">'
                     for summary in project["sessions"]:
-                        session = app.session(summary["id"], summary["source"]["instance"])
-                        # Each session retains its own whole timeline and unique turn anchors.
-                        fragment = session_body(session)
-                        prefix = quote(summary["source"]["instance"] + '-' + summary["id"], safe="")
-                        fragment = fragment.replace('href="#turn-', f'href="#{prefix}-turn-').replace('id="turn-', f'id="{prefix}-turn-')
-                        content += f'<article data-session-id="{escape(summary["id"], quote=True)}">{fragment}</article>'
+                        href = '/session/' + quote(summary["id"], safe="") + '?' + urlencode({"source": summary["source"]["instance"]})
+                        name = summary["name"] or summary["id"]
+                        content += (f'<li><h2><a href="{escape(href, quote=True)}">{escape(name)}</a></h2>'
+                                    f'<p class="count">会话开始：{source_time(summary.get("createdAt"))} · 最近保存：{saved_time(summary.get("savedAt"))}</p>'
+                                    f'<p class="count">来源实例：<code>{escape(summary["source"]["instance"])}</code></p></li>')
+                    content += '</ul>'
+                    content += search_form(app, project_id=project["id"])
+                    content += collection_html(status(), str(app.database))
                     self.respond(200, "text/html", page(project["label"], content))
                 elif url.path == "/api/sessions":
                     self.respond(200, "application/json", json.dumps(app.sessions(), ensure_ascii=False))
