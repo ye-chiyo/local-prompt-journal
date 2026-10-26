@@ -24,7 +24,7 @@ def now() -> str:
 
 
 class CodexHistory:
-    ALLOWED = frozenset({"initialize", "thread/read", "thread/turns/list", "thread/items/list"})
+    ALLOWED = frozenset({"initialize", "thread/list", "thread/read", "thread/turns/list", "thread/items/list"})
 
     def __init__(self, command: list[str] | None = None, timeout: float = 20):
         if command is None:
@@ -179,7 +179,7 @@ class CodexHistory:
                 raise HistoryError(f"{method} 分页结果格式未知。")
             for i, entry in enumerate(response["data"]):
                 try:
-                    identity = (entry["id"],) if method == "thread/turns/list" else (entry["turnId"], entry["item"]["id"])
+                    identity = (entry["id"],) if method in ("thread/list", "thread/turns/list") else (entry["turnId"], entry["item"]["id"])
                 except (KeyError, TypeError) as exc:
                     raise HistoryError(f"{method} 条目缺少来源身份，不能归档。") from exc
                 if identity in identities:
@@ -194,6 +194,55 @@ class CodexHistory:
             if not isinstance(cursor, str) or not cursor or cursor in seen:
                 raise HistoryError(f"{method} 返回重复或无效游标，不能宣称读取完整。")
             seen.add(cursor)
+
+    def instance(self) -> str:
+        home = self.identity.get("codexHome")
+        if not home:
+            raise HistoryError("数据源未提供来源实例身份 codexHome。")
+        return hashlib.sha256(str(Path(home).resolve()).encode("utf-8")).hexdigest()
+
+    def discover(self, page_size: int = 100) -> list[dict[str, Any]]:
+        sessions: dict[str, dict[str, Any]] = {}
+        # The schema explicitly documents that the default repairs rollout metadata.
+        # DB-only enumeration avoids that write. Never retain list previews as evidence.
+        for archived in (False, True):
+            self.evidence = []
+            entries = self.pages("thread/list", {"limit": page_size, "archived": archived,
+                "useStateDbOnly": True, "sortKey": "created_at", "sortDirection": "asc",
+                "sourceKinds": ["cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
+                                "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown"]})
+            for entry, _ in entries:
+                sessions[entry["id"]] = {k: entry[k] for k in ("id", "name", "cwd", "projectId", "createdAt", "updatedAt", "status") if k in entry}
+        self.evidence = []
+        return list(sessions.values())
+
+    def capture_since(self, metadata: dict[str, Any], enabled_at: float, page_size: int) -> dict[str, Any]:
+        self.evidence = [self.initialization_evidence] if self.initialization_evidence else []
+        params = {"threadId": metadata["id"], "limit": page_size, "sortDirection": "asc"}
+        # Metadata-only turns do not read old bodies. Only new turns are hydrated.
+        turns = self.pages("thread/turns/list", {**params, "itemsView": "notLoaded"})
+        if any(t.get("itemsView") != "notLoaded" or t.get("items") for t, _ in turns):
+            raise HistoryError("来源未遵守无正文回合元数据请求；停止采集，不扩大首次范围。")
+        selected = []
+        items = []
+        for turn, ref in turns:
+            started = turn.get("startedAt")
+            if not isinstance(started, (int, float)):
+                raise HistoryError("来源回合开始时间未知，不能安全判定首次范围；未读取正文。")
+            if started < enabled_at:
+                continue
+            turn_items = self.pages("thread/items/list", {**params, "turnId": turn["id"]})
+            if any(entry.get("turnId") != turn["id"] for entry, _ in turn_items):
+                raise HistoryError("条目分页返回错误回合，保留原快照。")
+            selected.append(({**turn, "items": [e["item"] for e, _ in turn_items], "itemsView": "full"}, ref))
+            items.extend(turn_items)
+        return {"thread": metadata, "turns": selected, "items": items,
+                "source": {"instance": self.instance(), "version": self.identity.get("userAgent"),
+                    "transport": "app-server stdio", "identity": self.identity,
+                    "scope": {"enabledAt": enabled_at, "policy": "turns-starting-from-enablement",
+                              "excludedTurnCount": len(turns) - len(selected)},
+                    "networkPolicy": "inherited proxies replaced with a reserved non-listening loopback port"},
+                "evidence": list(self.evidence)}
 
     def capture(self, thread_id: str, page_size: int) -> dict[str, Any]:
         if not 1 <= page_size <= 100:
@@ -210,12 +259,8 @@ class CodexHistory:
         if any(turn.get("itemsView") != "full" for turn, _ in turns):
             raise HistoryError("数据源返回摘要或未说明完整性；不能把摘要归档为原文。")
         items = self.pages("thread/items/list", params)
-        home = self.identity.get("codexHome")
-        if not home:
-            raise HistoryError("数据源未提供来源实例身份 codexHome。")
-        instance = hashlib.sha256(str(Path(home).resolve()).encode("utf-8")).hexdigest()
         return {"thread": thread, "turns": turns, "items": items,
-                "source": {"instance": instance, "version": self.identity.get("userAgent"),
+                "source": {"instance": self.instance(), "version": self.identity.get("userAgent"),
                            "transport": "app-server stdio", "identity": self.identity,
                            "networkPolicy": "inherited proxies replaced with a reserved non-listening loopback port"},
                 "evidence": list(self.evidence)}

@@ -8,11 +8,13 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 from typing import Any
 
 from .app import Journal, external_path
 from .source import CodexHistory, HistoryError
 from .web import create_server
+from .sync import Collector
 
 
 def write_export(destination: Path, content: str) -> None:
@@ -89,6 +91,10 @@ def main() -> int:
             command.add_argument("--output", type=Path, required=True)
     server = commands.add_parser("serve", help="在 127.0.0.1 打开只读查看服务；Ctrl+C 关闭")
     server.add_argument("--port", type=int, default=8765)
+    runner = commands.add_parser("run", help="启动自动发现、持续采集与本机页面；Ctrl+C 停止")
+    runner.add_argument("--port", type=int, default=8766)
+    runner.add_argument("--interval", type=float, default=3)
+    runner.add_argument("--start-from-now", action="store_true", help="仅首次启用：从下一新回合开始，不回补旧正文")
     args = parser.parse_args()
     try:
         if args.command == "probe":
@@ -111,14 +117,19 @@ def main() -> int:
         elif args.command == "export":
             write_export(args.output, app.export_session(args.thread_id, args.source_instance))
             print(json.dumps({"saved": str(args.output.resolve())}, ensure_ascii=False))
-        elif args.command == "serve":
-            server_instance = create_server(app, args.port)
+        elif args.command in ("serve", "run"):
+            collector = Collector(app, interval=args.interval, enabled_at=time.time() if args.start_from_now else None) if args.command == "run" else None
+            server_instance = create_server(app, args.port, collector)
+            if collector:
+                collector.start()
             print(f"本机会话记录：http://127.0.0.1:{server_instance.server_port} · 数据：{app.data_dir}", flush=True)
             try:
                 server_instance.serve_forever()
             except KeyboardInterrupt:
                 pass
             finally:
+                if collector:
+                    collector.stop()
                 server_instance.server_close()
         return 0
     except (HistoryError, OSError, sqlite3.Error, ValueError, KeyError) as exc:
