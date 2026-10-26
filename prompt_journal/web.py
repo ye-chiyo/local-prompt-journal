@@ -153,11 +153,10 @@ def collection_html(status: dict[str, Any], database: str) -> str:
     error = escape(status.get("error") or "无来源级错误")
     return ('<section class="source" aria-label="本机数据库与采集状态"><strong>自动保存到本机数据库 · 无需手动下载</strong>'
             f'<dl><dt>数据库文件</dt><dd>{escape(database)}</dd></dl>'
-            '<p>应用自带 SQLite 数据库，无需另行安装。对话、工具记录、原始证据与修订会在采集服务运行时自动入库；重新打开后直接读取已保存记录。</p>'
             f'<p><strong>{running} · {availability}</strong></p>'
             f'<p>最近成功归档检查：{saved_time(status.get("lastSuccessAt"))} · 最近来源成功检查：{saved_time(status.get("lastSourceSuccessAt"))}</p>'
             f'<p>上次完整检查发现 {status.get("discoveredCount", 0)} 个会话；范围内保存成功 {saved} 个，失败 {len(rows)} 个。最近检查：{saved_time(status.get("lastCheckedAt"))}。当前来源错误：{error}</p>'
-            f'<ul>{"".join(rows)}</ul><p class="muted">首次启用：{source_time(status.get("enabledAt"))}。只读取启用后开始的回合；旧会话的新回合会自动采集，跨启用时刻的旧回合不回补。来源只提供整秒时，启用同秒无法区分先后的回合也不读取；开始时间未知会报告错误。页面关闭后，仍在运行的采集服务继续工作。</p></section>')
+            f'<ul>{"".join(rows)}</ul></section>')
 
 
 def display_value(value: Any) -> str:
@@ -541,13 +540,12 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     if project is None:
                         raise KeyError("项目尚未保存")
                     content = collection_html(status(), str(app.database))
-                    content += f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><p>以下按来源会话开始时间升序排列。打开单个会话后阅读完整正文、工具结果和原始证据。</p><ul class="session-list">'
+                    content += f'<a href="/">← 项目列表</a><h1>{escape(project["label"])}</h1><ul class="session-list">'
                     for summary in project["sessions"]:
                         href = '/session/' + quote(summary["id"], safe="") + '?' + urlencode({"source": summary["source"]["instance"]})
                         name = summary["name"] or summary["id"]
                         content += (f'<li><h2><a href="{escape(href, quote=True)}">{escape(name)}</a></h2>'
-                                    f'<p class="count">会话开始：{source_time(summary.get("createdAt"))} · 最近保存：{saved_time(summary.get("savedAt"))}</p>'
-                                    f'<p class="count">来源实例：<code>{escape(summary["source"]["instance"])}</code></p></li>')
+                                    f'<p class="count">会话开始：{source_time(summary.get("createdAt"))} · 最近保存：{saved_time(summary.get("savedAt"))}</p></li>')
                     content += '</ul>'
                     content += search_form(app, project_id=project["id"])
                     self.respond(200, "text/html", page(project["label"], content))

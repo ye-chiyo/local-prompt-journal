@@ -36,6 +36,8 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
         for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", "阶段未知", "附件未取得", "fixture-1", "自动保存到本机数据库", "本会话已入库", str(self.app.database)):
             self.assertIn(text, html)
+        self.assertNotIn("应用自带 SQLite 数据库", html)
+        self.assertNotIn("首次启用：", html)
         self.assertNotIn("选择导出范围", html)
         self.assertNotIn('href="/export/', html)
         self.assertNotIn("<script>不会执行历史代码</script>", html)
@@ -71,6 +73,8 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertNotIn("正在核对中文。", html)
         self.assertLess(html.index("自动保存到本机数据库"), html.index("中文验收样本"))
         self.assertLess(html.index("中文验收样本"), html.index("搜索已保存正文"))
+        self.assertNotIn("来源实例：", html)
+        self.assertNotIn("以下按来源会话开始时间升序排列", html)
 
     def test_search_page_places_database_status_before_search_results(self):
         with urlopen(self.url + "/search?q=%E8%AF%B7%E8%AE%B0%E5%BD%95") as response:

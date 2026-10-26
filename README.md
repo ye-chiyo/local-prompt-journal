@@ -56,6 +56,8 @@ python -m prompt_journal export 会话ID --output C:/Users/614/AppData/Local/Loc
 
 默认数据目录：`%LOCALAPPDATA%/LocalPromptJournal/data/`，数据库为 `journal.sqlite3`。用 `python -m prompt_journal --data-dir 外部目录 ...` 更改。数据库与导出均拒绝写入本项目源码目录；Git 同时忽略 SQLite、JSONL、缓存与运行时产物。
 
+应用自带 SQLite 数据库，无需另行安装。对话、工具记录、原始证据与修订会在采集服务运行时自动入库；重新打开页面后直接读取已保存记录。首次启用时只读取启用后开始的回合；旧会话后续新开的回合会自动采集，跨启用时刻的旧回合不回补。来源只提供整秒时，启用同秒无法区分先后的回合也不读取；开始时间未知会报告错误。页面关闭后，仍在运行的采集服务继续工作。
+
 首页、项目页与会话页顶部显示当前实际使用的数据库完整路径及采集状态，会话页显示最近入库时间。采集服务运行时自动保存，关闭浏览器后仍继续；停止采集服务后暂停新记录入库。服务重启沿用同一数据库即可继续查看和采集，不需要先下载、导出或重新导入。当前本机正式服务使用的数据文件是 `C:\Users\614\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\LocalPromptJournal\data\journal.sqlite3`；8767 演示服务使用单独的测试数据库，不是正式会话记录。
 
 `probe` 无预期清单时只做能力探测并返回退出码 1，表示尚未验收；不会将“能够连接”误报为“样本通过”。薄真实契约检查需提供**事先独立定义**的完整样本清单：
