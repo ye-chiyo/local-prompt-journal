@@ -170,17 +170,6 @@ document.addEventListener('input', event => {
     event.target.sessionTimer = setTimeout(() => loadSessionOptions(event.target.form), 200);
   }
 });
-function selectDirectoryGroup(group) {
-  if (group) {
-    const info = document.querySelector('.session-info');
-    if (info) info.dataset.selected = group.dataset.key;
-    for (const entry of document.querySelectorAll('.session-group')) entry.classList.toggle('selected', entry === group);
-    if (info) for (const field of ['name', 'started', 'count', 'source', 'saved']) {
-      const value = info.querySelector('[data-info="' + field + '"]');
-      if (value) value.textContent = group.dataset[field] || '未知';
-    }
-  }
-}
 document.addEventListener('submit', event => {
   if (event.target.id !== 'session-selection') return;
   if (!document.querySelector('[data-session-choice]:checked')) {
@@ -294,11 +283,12 @@ document.addEventListener('click', event => {
   event.preventDefault();
   loadAtlasTurn(link);
 });
-document.addEventListener('focusin', event => selectDirectoryGroup(event.target.closest('.session-group')));
 document.addEventListener('click', event => {
   if (event.target.matches('[data-session-more]')) loadSessionOptions(event.target.form, true);
-  selectDirectoryGroup(event.target.closest('.session-group'));
 });
+function canRefreshPage() {
+  return !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open], details[data-key="directory:info"][open]');
+}
 async function update() {
   try {
     const response = await fetch('/api/version');
@@ -328,43 +318,41 @@ async function update() {
       indicator.classList.toggle('error', Boolean(status.error));
       indicator.dataset.state = status.error ? 'error' : status.running ? 'running' : 'stopped';
     }
-    const canRefresh = !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open], details[data-key="directory:info"][open]');
+    let canRefresh = canRefreshPage();
     if (version !== null && current !== version && canRefresh) {
       const html = await fetch(location.pathname + location.search);
       if (!html.ok) throw new Error();
       const next = new DOMParser().parseFromString(await html.text(), 'text/html');
-      const states = new Map([...document.querySelectorAll('details[data-key]')].map(d => [d.dataset.key, d.open]));
-      for (const detail of next.querySelectorAll('details[data-key]')) {
-        if (states.has(detail.dataset.key)) detail.open = states.get(detail.dataset.key);
+      canRefresh = canRefreshPage();
+      if (canRefresh) {
+        const states = new Map([...document.querySelectorAll('details[data-key]')].map(d => [d.dataset.key, d.open]));
+        for (const detail of next.querySelectorAll('details[data-key]')) {
+          if (states.has(detail.dataset.key)) detail.open = states.get(detail.dataset.key);
+        }
+        const position = window.scrollY;
+        const focused = document.activeElement?.closest('details[data-key]')?.dataset.key;
+        const focusedHref = document.activeElement?.closest('a')?.getAttribute('href');
+        const formValues = [...document.querySelectorAll('.search-form [name]')].map(el => [el.name, el.value, el.selectedOptions?.[0]?.textContent]);
+        const sessionFilter = document.querySelector('[data-session-filter]')?.value || '';
+        for (const form of document.querySelectorAll('.search-form')) form.sessionRequest?.abort();
+        document.querySelector('main').replaceWith(next.querySelector('main'));
+        document.getElementById('page-context')?.remove();
+        document.querySelector('.project-nav')?.replaceWith(next.querySelector('.project-nav'));
+        for (const [name, value, label] of formValues) {
+          const el = [...document.querySelectorAll('.search-form [name]')].find(el => el.name === name);
+          if (el?.matches('[data-session-options]') && value && ![...el.options].some(option => option.value === value)) el.add(new Option(label, value));
+          if (el) el.value = value;
+        }
+        const filter = document.querySelector('[data-session-filter]');
+        if (filter) filter.value = sessionFilter;
+        locateHit();
+        if (focused) {
+          const detail = [...document.querySelectorAll('details[data-key]')].find(d => d.dataset.key === focused);
+          const link = focusedHref && detail && [...detail.querySelectorAll('a[href]')].find(a => a.getAttribute('href') === focusedHref);
+          (link || detail?.querySelector('summary'))?.focus({preventScroll:true});
+        }
+        window.scrollTo(0, position);
       }
-      const position = window.scrollY;
-      const selectedGroup = document.querySelector('.session-info')?.dataset.selected;
-      const focused = document.activeElement?.closest('details[data-key]')?.dataset.key;
-      const focusedHref = document.activeElement?.closest('a')?.getAttribute('href');
-      const formValues = [...document.querySelectorAll('.search-form [name]')].map(el => [el.name, el.value, el.selectedOptions?.[0]?.textContent]);
-      const sessionFilter = document.querySelector('[data-session-filter]')?.value || '';
-      for (const form of document.querySelectorAll('.search-form')) form.sessionRequest?.abort();
-      document.querySelector('main').replaceWith(next.querySelector('main'));
-      document.getElementById('page-context')?.remove();
-      document.querySelector('.project-nav')?.replaceWith(next.querySelector('.project-nav'));
-      if (selectedGroup) {
-        const group = [...document.querySelectorAll('.session-group')].find(el => el.dataset.key === selectedGroup);
-        selectDirectoryGroup(group);
-      }
-      for (const [name, value, label] of formValues) {
-        const el = [...document.querySelectorAll('.search-form [name]')].find(el => el.name === name);
-        if (el?.matches('[data-session-options]') && value && ![...el.options].some(option => option.value === value)) el.add(new Option(label, value));
-        if (el) el.value = value;
-      }
-      const filter = document.querySelector('[data-session-filter]');
-      if (filter) filter.value = sessionFilter;
-      locateHit();
-      if (focused) {
-        const detail = [...document.querySelectorAll('details[data-key]')].find(d => d.dataset.key === focused);
-        const link = focusedHref && detail && [...detail.querySelectorAll('a[href]')].find(a => a.getAttribute('href') === focusedHref);
-        (link || detail?.querySelector('summary'))?.focus({preventScroll:true});
-      }
-      window.scrollTo(0, position);
     }
     if (version === null || current === version || canRefresh) version = current;
     document.getElementById('connection-error')?.remove();
