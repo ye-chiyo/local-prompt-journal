@@ -205,6 +205,11 @@ document.addEventListener('click', async event => {
   if (sessionButton) {
     const id = sessionButton.dataset.selectGroup;
     for (const row of document.querySelectorAll('.atlas-session-row')) row.classList.toggle('selected', row.dataset.group === id);
+    for (const button of document.querySelectorAll('[data-select-group]')) button.setAttribute('aria-pressed', String(button === sessionButton));
+    for (const link of document.querySelectorAll('[data-atlas-turn]')) {
+      link.classList.remove('selected');
+      link.removeAttribute('aria-current');
+    }
     for (const group of document.querySelectorAll('[data-turn-group]')) group.hidden = group.dataset.turnGroup !== id;
     const group = document.querySelector('[data-turn-group="' + id + '"]');
     document.querySelector('[data-atlas-name]').textContent = group.dataset.name;
@@ -222,7 +227,11 @@ document.addEventListener('click', async event => {
   const request = ++atlasRequest;
   const content = document.querySelector('[data-reader-content]');
   const open = document.querySelector('[data-reader-open]');
-  for (const item of document.querySelectorAll('[data-atlas-turn]')) item.classList.toggle('selected', item === link);
+  for (const item of document.querySelectorAll('[data-atlas-turn]')) {
+    item.classList.toggle('selected', item === link);
+    if (item === link) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  }
   document.querySelector('[data-reader-title]').textContent = '回合 ' + link.dataset.turnOrdinal;
   content.textContent = '正在加载回合正文…';
   open.hidden = true;
@@ -598,7 +607,7 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
     for index, (session, entries) in enumerate(groups):
         label = session['name'] or session['id']
         choice = selection_checkbox(session['source']['instance'], session['id'], label)
-        body += f'<div class="atlas-session-row{(" selected" if index == 0 else "")}" data-group="{index}">{choice}<button class="atlas-session-button" type="button" data-select-group="{index}"><span class="atlas-session-icon">{icon("folder")}</span><span class="atlas-session-copy"><strong>{escape(label)}</strong><small>{source_time(session.get("createdAt"))} · 本页 {len(entries)} 个回合</small></span></button></div>'
+        body += f'<div class="atlas-session-row{(" selected" if index == 0 else "")}" data-group="{index}">{choice}<button class="atlas-session-button" type="button" aria-pressed="{str(index == 0).lower()}" aria-controls="session-turns-{index}" data-select-group="{index}"><span class="atlas-session-icon">{icon("folder")}</span><span class="atlas-session-copy"><strong>{escape(label)}</strong><small>{source_time(session.get("createdAt"))} · 本页 {len(entries)} 个回合</small></span></button></div>'
     if not groups:
         body += f'<p class="empty">这一页没有回合。<a href="{escape(path, quote=True)}">返回第一页</a></p>'
     body += '</div><nav class="turn-navigation pagination" aria-label="回合目录分页">'
@@ -616,7 +625,7 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
     for index, (session, entries) in enumerate(groups):
         label = escape(session['name'] or session['id'], quote=True)
         meta = escape(f'开始时间 {source_time(session.get("createdAt"))} · 本页 {len(entries)} 个回合', quote=True)
-        body += f'<div class="atlas-turn-group" data-turn-group="{index}" data-name="{label}" data-meta="{meta}" data-source="{escape(session["source"]["instance"], quote=True)}"{(" hidden" if index else "")}><ul class="turn-links">'
+        body += f'<div class="atlas-turn-group" id="session-turns-{index}" data-turn-group="{index}" data-name="{label}" data-meta="{meta}" data-source="{escape(session["source"]["instance"], quote=True)}"{(" hidden" if index else "")}><ul class="turn-links">'
         for entry in entries:
             href = turn_url(session, entry['id'], back, saved=bool(options.get('saved')))
             state = entry['status'] if entry['status'] in states else 'unknown'

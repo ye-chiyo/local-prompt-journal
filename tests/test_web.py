@@ -126,6 +126,36 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertIn('<details data-key="directory:info"><summary>来源信息</summary>', html)
         self.assertNotIn("以下按来源会话开始时间升序排列", html)
 
+    def test_directory_announces_current_session_without_checking_it_for_batch_actions(self):
+        from html.parser import HTMLParser
+
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.sessions = []
+                self.choices = []
+                self.regions = set()
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag == "button" and "aria-pressed" in attributes:
+                    self.sessions.append(attributes)
+                if tag == "input" and attributes.get("type") == "checkbox":
+                    self.choices.append(attributes)
+                if "id" in attributes:
+                    self.regions.add(attributes["id"])
+
+        first = self.app.save_capture(catalog_capture("selection-first", 100))
+        self.app.save_capture(catalog_capture("selection-second", 200))
+        html = urlopen(self.url + "/project/" + first["project"]["id"]).read().decode()
+        controls = Controls()
+        controls.feed(html)
+        self.assertEqual([button["aria-pressed"] for button in controls.sessions], ["true", "false"])
+        self.assertTrue(all(button.get("aria-controls") in controls.regions for button in controls.sessions))
+        self.assertEqual(len(controls.choices), 2)
+        self.assertTrue(all("checked" not in choice for choice in controls.choices))
+        self.assertNotIn("目录不应加载的正文", html)
+
     def test_project_directory_and_automatic_polling_work_without_reading_snapshot_bodies(self):
         project_id = self.app.projects()[0]["id"]
         connect = sqlite3.connect
