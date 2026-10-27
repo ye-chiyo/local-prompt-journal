@@ -21,3 +21,7 @@ Revision: 2026-10-27
 - mypy 17个源文件通过；git diff --check通过。
 - 未新增 CSS、JavaScript 源码字符串断言或内部测试接口；未重跑无关全套测试。
 - 未操作正式数据库或服务。最终浏览器绿灯由父代理补入此记录。
+
+## Parent GREEN and release
+
+2026-10-27：在同一隔离浏览器协议下，刷新请求挂起后勾选，再放行响应；修复前已选1变0，修复后已选1和checked count1均保持。移除故障控制文件。Standards复审原0硬违规/1P3旧逻辑，Spec原1P2竞态均已修复。针对修复的15项网页/回合测试和mypy已通过，未重复整套52项。用户明确授权后8766更新至d07dbe6，PID6844，采集running=true/error=false，enabledAt=1792940638.277109保持。
