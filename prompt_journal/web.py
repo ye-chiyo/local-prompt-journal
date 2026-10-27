@@ -46,7 +46,7 @@ def page(title: str, body: str, reading: bool = False, active: str = 'projects',
               f'<a href="/search"{search_current}>{icon("search")}搜索</a><a href="/status"{status_current}>{icon("check")}采集状态</a>'
               f'<a href="/manage/exclusions"{manage_current}>{icon("trash")}删除管理</a></nav>'
               f'<div class="project-nav"><p>项目列表</p>{project_links}</div>'
-              '<a class="capacity-card" href="/capacity"><strong>数据库容量</strong><span id="capacity-label">正在读取</span><span class="capacity-track"><span id="capacity-progress"></span></span></a>'
+              '<a class="capacity-card" href="/capacity"><strong>数据库容量</strong><span id="capacity-label">正在读取</span><span class="capacity-track" role="progressbar" aria-label="数据库容量" aria-valuemin="0" aria-valuemax="100"><span id="capacity-progress"></span></span></a>'
               '<span id="collection-indicator" class="collection-indicator" aria-live="polite">正在检查</span></header>')
     search = f'<form class="header-search" action="/search" method="get" aria-label="全局正文搜索">{icon("search")}<input type="search" name="q" aria-label="全局搜索正文" placeholder="搜索已保存正文"></form>'
     return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><a class="skip-link" href="#main">跳到正文</a>{header}<div class="app-content">{search}<main id="main" tabindex="-1"{main_class}>{body}</main></div></body></html>'
@@ -277,8 +277,12 @@ async function update() {
       if (label && bar) {
         const ratio = capacity.limitBytes ? capacity.usedBytes / capacity.limitBytes : 0;
         label.textContent = format(capacity.usedBytes) + (capacity.limitBytes ? ' / ' + format(capacity.limitBytes) : ' · 未设上限') + (capacity.paused ? ' · 新会话暂停' : '');
+        if (capacity.limitBytes) label.textContent += ' · ' + (ratio * 100).toFixed(1) + '%' + (ratio > .8 && ratio < 1 ? ' · 接近上限' : '');
         bar.style.width = Math.min(100, ratio * 100) + '%';
         bar.dataset.state = ratio >= 1 ? 'full' : ratio > .8 ? 'warning' : 'normal';
+        bar.parentElement.setAttribute('aria-valuetext', label.textContent);
+        if (capacity.limitBytes) bar.parentElement.setAttribute('aria-valuenow', String(Math.min(100, ratio * 100)));
+        else bar.parentElement.removeAttribute('aria-valuenow');
       }
     }
     const indicator = document.getElementById('collection-indicator');
@@ -351,20 +355,50 @@ def saved_time(value: Any) -> str:
     return source_time(datetime.fromisoformat(value).timestamp()) if value else "尚无"
 
 
+def capacity_html(capacity: dict[str, Any], token: str, amount: str | None = None,
+                  unit: str = 'MiB', error: str = '', saved: bool = False) -> str:
+    used, limit = capacity['usedBytes'], capacity['limitBytes']
+    ratio = used / limit if limit else None
+    state = 'full' if ratio is not None and ratio >= 1 else 'warning' if ratio is not None and ratio > .8 else 'normal'
+    status = ('已达到上限，新会话暂停保存。' if capacity['paused'] else
+              '使用量已超过 80%，接近容量上限。' if state == 'warning' else
+              '当前可以保存新会话。' if limit else '未设上限，按现有采集范围保存。')
+    limit_label = f'{limit / 1048576:g} MiB' if limit else '未设上限'
+    notice = f'<p class="capacity-feedback" role="alert">{escape(error)}</p>' if error else '<p class="capacity-feedback" role="status">容量设置已保存。</p>' if saved else ''
+    if amount is None:
+        amount = f'{limit / 1048576:g}' if limit else ''
+    unit = unit if unit in ('MiB', 'GiB') else 'MiB'
+    options = ''.join(f'<option value="{value}"{" selected" if value == unit else ""}>{value}</option>' for value in ('MiB', 'GiB'))
+    percent = f'{ratio * 100:.1f}%' if ratio is not None else '未设上限'
+    progress = (f'<progress class="capacity-meter" max="100" value="{min(100, ratio * 100):.1f}" aria-label="数据库容量使用率">{percent}</progress>' if ratio is not None else '')
+    return (f'<h1>数据库容量</h1>{notice}<section class="source capacity-settings" data-capacity-state="{state}">'
+            f'<h2>使用情况</h2><div class="capacity-summary"><strong>{used / 1048576:.1f}<small> MiB 已使用</small></strong><span>{percent}</span></div>{progress}'
+            f'<p>设置上限：{limit_label}</p><p class="capacity-state">{status}</p>'
+            '<details><summary>容量统计与保存规则</summary><p>统计数据库中已使用的数据页；删除后可重用的空间不计入。附件文件单独存储，不计入数据库容量。</p>'
+            '<p>达到上限后暂停保存新会话，已有会话仍会更新，因此使用量可能超过上限。容量降至上限以下后自动恢复。此设置不是整个数据目录的磁盘配额。</p></details></section>'
+            f'<section class="source capacity-settings"><h2>设置容量上限</h2><p class="muted" id="capacity-help">支持 1 MiB 至 1 TiB；留空表示不限制。</p>'
+            f'<form method="post" action="/capacity"><input type="hidden" name="token" value="{token}"><label>容量<input name="amount" type="number" min="0" step="any" aria-describedby="capacity-help" value="{escape(amount, quote=True)}"></label>'
+            f'<label>单位<select name="unit">{options}</select></label><button type="submit">保存设置</button></form></section>')
+
+
 def collection_html(status: dict[str, Any], database: str) -> str:
     running = "采集运行中" if status.get("running") else "此页面服务未运行采集器；其他进程的采集状态请在其页面核对"
     availability = "来源不可用" if status.get("sourceAvailable") is False else "来源可访问" if status.get("sourceAvailable") else "等待来源检查"
     if status.get("sourceAvailable") and status.get("discoveredCount") == 0:
         availability += " · 确实没有会话"
-    rows = [f'<li>会话 {escape(s["id"])}：{escape(s["error"])}</li>' for s in status.get("sessions", []) if s.get("error")]
+    paused = sum(s.get('status') == 'capacityPaused' for s in status.get('sessions', []))
+    rows = [f'<li>会话 {escape(s["id"])}：{escape(s["error"])}</li>' for s in status.get("sessions", []) if s.get("error") and s.get('status') != 'capacityPaused']
     saved = sum(s.get("status") == "saved" for s in status.get("sessions", []))
     error = escape(status.get("error") or "无来源级错误")
-    return ('<section class="source" aria-label="本机数据库与采集状态"><strong>自动保存到本机数据库 · 无需手动下载</strong>'
+    return ('<section class="source collection-summary" aria-label="本机数据库与采集状态"><h2>自动归档</h2>'
+            f'<p class="collection-state"><strong>{running} · {availability}</strong></p>'
+            f'<dl><dt>最近检查</dt><dd>{saved_time(status.get("lastCheckedAt"))}</dd><dt>最近成功归档</dt><dd>{saved_time(status.get("lastSuccessAt"))}</dd>'
+            f'<dt>最近来源检查</dt><dd>{saved_time(status.get("lastSourceSuccessAt"))}</dd><dt>本轮结果</dt><dd>发现 {status.get("discoveredCount", 0)} 个会话 · 范围内保存 {saved} 个 · 失败 {len(rows)} 个 · 容量暂停 {paused} 个</dd></dl>'
+            f'<p>当前来源错误：{error}</p><ul>{"".join(rows)}</ul>'
+            '<details><summary>本机存储与采集范围</summary>'
             f'<dl><dt>数据库文件</dt><dd>{escape(database)}</dd></dl>'
-            f'<p><strong>{running} · {availability}</strong></p>'
-            f'<p>最近成功归档检查：{saved_time(status.get("lastSuccessAt"))} · 最近来源成功检查：{saved_time(status.get("lastSourceSuccessAt"))}</p>'
-            f'<p>上次完整检查发现 {status.get("discoveredCount", 0)} 个会话；范围内保存成功 {saved} 个，失败 {len(rows)} 个。最近检查：{saved_time(status.get("lastCheckedAt"))}。当前来源错误：{error}</p>'
-            f'<ul>{"".join(rows)}</ul></section>')
+            '<p>自动保存到本机数据库，无需手动下载。采集始终遵守原启用时间和范围；发现会话不代表该会话会被保存，也不会因此回补全部历史。</p>'
+            '<p><a href="/capacity">查看数据库容量与保存限制</a></p></details></section>')
 
 
 def display_value(value: Any) -> str:
@@ -718,15 +752,15 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
     token = secrets.token_urlsafe(32)
 
     def management_form(action: str, identity: str, instance: str, label: str) -> str:
-        return (f'<form method="post" action="/manage/{action}/{quote(identity, safe="")}">'
+        return (f'<form class="management-action" method="post" action="/manage/{action}/{quote(identity, safe="")}">'
                 f'<input type="hidden" name="token" value="{token}">'
                 f'<input type="hidden" name="source" value="{escape(instance, quote=True)}">'
-                f'<button type="submit" class="action">{escape(label)}</button></form>')
+                f'<button type="submit" class="action{" danger-action" if action == "delete" else ""}">{escape(label)}</button></form>')
 
     def deletion_scope() -> str:
-        return ('<p>删除范围仅限本应用管理的该来源会话：正文、工具、历史修订、原始证据、搜索内容和附件引用。'
+        return ('<p>删除范围仅限本应用管理的该来源会话：正文、历史修订、来源证据、搜索内容和附件引用。'
                 '其他会话仍引用的共享附件继续保留。</p><p>不改变 Codex 原会话；不擦除另存的导出副本。'
-                '已删除会话将排除自动归档，只有显式解除排除后才重新采集，仍遵守原启用时间。</p>')
+                '删除排除用于阻止已删除且原本符合采集条件的会话再次归档；解除后仍遵守原启用时间和范围，不会因此回补全部历史。</p>')
 
     def selected_sessions(values: dict[str, list[str]]) -> list[tuple[str, str]]:
         selected: list[tuple[str, str]] = []
@@ -763,6 +797,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             if not self.local_request(allow_opaque_form=True):
                 self.respond(403, 'text/plain', '仅允许本机同源访问。')
                 return
+            values: dict[str, list[str]] = {}
             try:
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 0 < size <= 65536 or self.headers.get('Content-Type', '').split(';')[0] != 'application/x-www-form-urlencoded':
@@ -832,7 +867,11 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 self.send_header('Content-Length', '0')
                 self.end_headers()
             except (ValueError, UnicodeError) as exc:
-                self.respond(400, 'text/plain', str(exc))
+                if urlsplit(self.path).path == '/capacity':
+                    body = capacity_html(app.capacity(), token, values.get('amount', [''])[0], values.get('unit', ['MiB'])[0], error=str(exc))
+                    self.respond(400, 'text/html', page('数据库容量', body, active='capacity', projects=app.project_choices()))
+                else:
+                    self.respond(400, 'text/plain', str(exc))
             except KeyError as exc:
                 self.respond(404, 'text/plain', str(exc))
             except (OSError, sqlite3.Error):
@@ -850,15 +889,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 if url.path == '/api/capacity':
                     self.respond(200, 'application/json', json.dumps(app.capacity()))
                 elif url.path == '/capacity':
-                    capacity = app.capacity()
-                    used = capacity['usedBytes'] / 1048576
-                    cap_limit = capacity['limitBytes']
-                    limit_label = f'{cap_limit / 1048576:.1f} MiB' if cap_limit else '未设置'
-                    cap_state = '已达到上限，新会话暂停保存。' if capacity['paused'] else '当前可以保存新会话。' if cap_limit else '未设置上限。'
-                    cap_notice = '<p role="status">容量设置已保存。</p>' if options.get('saved') else ''
-                    body = f'<h1>数据库容量</h1>{cap_notice}<section class="source capacity-settings"><h2>使用情况</h2><p>已使用：<strong>{used:.1f} MiB</strong> · 设置上限：<strong>{limit_label}</strong></p><p>{cap_state}</p><p>统计数据库中已使用的数据页；删除后可重用的空间不计入。附件文件单独存储，不计入数据库容量。</p><p>达到上限后暂停保存新会话，已有会话仍会更新，因此使用量可能超过上限。容量降至上限以下后自动恢复。</p></section>'
-                    body += f'<section class="source capacity-settings"><h2>设置容量上限</h2><form method="post" action="/capacity"><input type="hidden" name="token" value="{token}"><label>容量（留空表示不限制）<input name="amount" type="number" min="0.001" max="1048576" step="any" value="{cap_limit / 1048576 if cap_limit else ""}"></label><label>单位<select name="unit"><option value="MiB">MiB</option><option value="GiB">GiB</option></select></label><button type="submit">保存设置</button></form></section>'
-                    self.respond(200, 'text/html', page('数据库容量', body, projects=app.project_choices()))
+                    body = capacity_html(app.capacity(), token, saved=bool(options.get('saved')))
+                    self.respond(200, 'text/html', page('数据库容量', body, active='capacity', projects=app.project_choices()))
                 elif url.path == '/selection':
                     selected = selected_sessions(options)
                     action = options.get('action', [''])[0]
@@ -879,20 +911,24 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif url.path == '/api/exclusions':
                     self.respond(200, 'application/json', json.dumps(app.exclusions(), ensure_ascii=False))
                 elif url.path == '/manage/exclusions':
-                    body = '<a href="/">← 项目列表</a><h1>删除排除管理</h1>' + deletion_scope()
-                    body += '<h2>已归档会话</h2><ul class="manage-list">'
-                    for summary in app.sessions():
+                    body = '<h1>删除管理</h1><section class="source management-help"><h2>删除归档，不改变原会话</h2>' + deletion_scope() + '</section>'
+                    summaries = app.sessions()
+                    body += f'<section class="source"><h2>已归档会话 <span class="count">{len(summaries)} 个</span></h2>'
+                    if not summaries:
+                        body += '<p class="empty">暂无已归档会话。</p>'
+                    body += '<ul class="manage-list">'
+                    for summary in summaries:
                         href = '/manage/delete/' + quote(summary['id'], safe='') + '?' + urlencode({'source': summary['source']['instance']})
                         body += f'<li><span>{escape(summary["name"] or summary["id"])}</span><a href="{escape(href, quote=True)}">查看删除选项</a></li>'
-                    body += '</ul><h2>删除排除</h2>'
+                    body += '</ul></section><h2>删除排除</h2><p class="muted">用于防止已删除且符合原采集条件的会话再次归档，不会扩大历史采集范围。</p>'
                     notices = {'deleted': '已删除受管理日志，并保留删除排除。', 'cleanupPending': '正文与证据已删除；附件清理未完成，请修复文件占用或权限后重试。重启也会重试。',
-                               'restored': '已解除删除排除，等待原范围内自动归档；已删除的历史副本不会恢复。'}
+                               'restored': '已解除删除排除；仅在仍符合原采集条件且来源可取得时重新归档。已删除的历史副本不会恢复。'}
                     notice = notices.get(options.get('notice', [''])[0])
                     if notice:
                         body += f'<p class="source" role="status">{notice}</p>'
                     entries = app.exclusions()
                     if not entries:
-                        body += '<p class="empty">没有删除排除。</p>'
+                        body += '<p class="empty">暂无被删除排除的会话。</p>'
                     for entry in entries:
                         pending = entry['status'] == 'cleanupPending'
                         body += f'<section class="source"><h2>{escape(entry["id"])}</h2><p>来源实例：<code>{escape(entry["sourceInstance"])}</code></p><p>{"附件清理未完成，保持删除排除" if pending else "受管理日志已删除，保持删除排除"}</p>'
