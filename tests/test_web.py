@@ -269,6 +269,20 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         form = urlencode({'token': token, 'amount': '2', 'unit': 'MiB'}).encode()
         self.assertIn('容量设置已保存', urlopen(Request(self.url + '/capacity', data=form)).read().decode())
         self.assertEqual(self.app.capacity()['limitBytes'], 2 * 1024 * 1024)
+        invalid = urlencode({'token': token, 'amount': '0', 'unit': 'MiB'}).encode()
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(self.url + '/capacity', data=invalid))
+        self.assertEqual(error.exception.code, 400)
+        self.assertIn('text/html', error.exception.headers['Content-Type'])
+        invalid_page = error.exception.read().decode()
+        self.assertIn('容量须在 1 MiB 至 1 TiB 之间', invalid_page)
+        self.assertIn('保存设置', invalid_page)
+        self.assertIn('value="0"', invalid_page)
+        self.assertEqual(json.load(urlopen(self.url + '/api/capacity'))['limitBytes'], 2 * 1024 * 1024)
+        cleared = urlencode({'token': token, 'amount': '', 'unit': 'MiB'}).encode()
+        cleared_page = urlopen(Request(self.url + '/capacity', data=cleared)).read().decode()
+        self.assertIn('未设上限', cleared_page)
+        self.assertIsNone(json.load(urlopen(self.url + '/api/capacity'))['limitBytes'])
 
     def test_large_message_is_loaded_on_expand_without_initial_html(self):
         large = "大文本原文-" + ("x" * 70_000)
