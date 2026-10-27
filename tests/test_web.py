@@ -13,7 +13,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 from prompt_journal import Journal, CodexHistory
@@ -217,7 +217,55 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             html = response.read().decode()
         self.assertIn('href="/status"', html)
         self.assertNotIn('数据库文件', html)
-        self.assertIn('请记录原文。', html)
+        self.assertIn('请记录原文。', unescape(re.sub(r'<[^>]*>', '', html)))
+
+    def test_search_highlights_literal_matches_and_selects_each_session_once(self):
+        query = '<b>线索</b>'
+        capture = catalog_capture('search-feedback', 100, text=query + ' 第一条')
+        answer = {'id': 'answer', 'type': 'agentMessage', 'text': '第二条 ' + query, 'phase': 'final_answer'}
+        capture['turns'][0][0]['items'][1] = answer
+        capture['items'][1][0]['item'] = answer.copy()
+        self.app.save_capture(capture)
+        route = '/search?' + urlencode({'q': query, 'limit': 30, 'offset': 0})
+        html = urlopen(self.url + route).read().decode()
+
+        class Results(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.highlights, self.choices, self.links = [], [], []
+                self.in_mark = False
+                self.bold_tags = 0
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag == 'mark':
+                    self.in_mark = True
+                if tag == 'b':
+                    self.bold_tags += 1
+                if tag == 'input' and attributes.get('name') == 'session':
+                    self.choices.append(attributes['value'])
+                if tag == 'a' and attributes.get('href', '').startswith('/session/search-feedback/'):
+                    self.links.append(attributes['href'])
+
+            def handle_endtag(self, tag):
+                if tag == 'mark':
+                    self.in_mark = False
+
+            def handle_data(self, data):
+                if self.in_mark:
+                    self.highlights.append(data)
+
+        results = Results()
+        results.feed(html)
+        self.assertEqual(results.highlights, [query, query])
+        self.assertEqual(results.bold_tags, 0)
+        self.assertEqual(len(results.choices), 1)
+        self.assertEqual(len(results.links), 2)
+        options = parse_qs(urlsplit(results.links[0]).query)
+        self.assertEqual(options['q'], [query])
+        self.assertEqual(options['return'], [route])
+        detail = urlopen(self.url + results.links[0]).read().decode()
+        self.assertIn('href="' + route.replace('&', '&amp;') + '">返回搜索结果', detail)
 
     def test_selected_sessions_can_be_exported_and_deleted_after_review(self):
         saved = self.app.save_capture(catalog_capture('selected-second', 100))
