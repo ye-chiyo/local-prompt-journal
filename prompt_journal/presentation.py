@@ -240,7 +240,7 @@ mark { background: #f6e3a8; color: #27364b; border-radius: 2px; }
 .atlas-session-row:nth-child(4n+3) .atlas-session-icon { background: #fff1ce; color: #a66a00; }
 .atlas-session-row:nth-child(4n) .atlas-session-icon { background: #dceaff; color: #1663e6; }
 .atlas-session-copy { display: grid; gap: 5px; min-width: 0; }
-.atlas-session-copy strong { font-size: 15px; overflow-wrap: anywhere; line-height: 1.45; }
+.atlas-session-copy strong { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; line-height: 1.45; }
 .atlas-session-copy small { line-height: 1.5; }
 .atlas-sessions .pagination { flex: none; margin: 0; padding: 14px 8px; gap: 8px; border-top: 1px solid var(--line); }
 .atlas-sessions .pagination a, .atlas-sessions .pagination .disabled { padding: 6px 9px; }
