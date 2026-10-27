@@ -199,6 +199,11 @@ document.addEventListener('submit', event => {
     notice.hideTimer = setTimeout(() => notice.classList.remove('visible'), 2000);
   }
 });
+document.addEventListener('change', event => {
+  if (!event.target.matches('[data-session-choice]')) return;
+  const summary = document.querySelector('[data-selection-summary]');
+  if (summary) summary.textContent = '已选 ' + document.querySelectorAll('[data-session-choice]:checked').length + ' 个会话';
+});
 let atlasRequest = 0;
 let atlasController = null;
 async function loadAtlasTurn(link) {
@@ -651,9 +656,9 @@ def turn_url(session: dict[str, Any], turn: str, return_to: str = '', saved: boo
 
 
 def selection_toolbar(return_to: str) -> str:
-    return (f'<form id="session-selection" action="/selection" method="get" class="selection-toolbar">'
+    return (f'<form id="session-selection" action="/selection" method="get" class="selection-toolbar" aria-label="会话批量操作">'
             f'<input type="hidden" name="return" value="{escape(return_to, quote=True)}">'
-            '<span>选择本页会话</span><button type="submit" name="action" value="export">导出所选</button>'
+            '<span data-selection-summary aria-live="polite">已选 0 个会话</span><button type="submit" name="action" value="export">导出所选</button>'
             '<button type="submit" name="action" value="delete">删除所选</button></form>')
 
 
@@ -675,7 +680,7 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
         groups[-1][1].append(entry)
     states = {'completed': '已完成', 'inProgress': '进行中', 'interrupted': '已中断', 'failed': '失败'}
     body = '<div class="directory-layout atlas-layout"><section class="atlas-sessions"><header class="atlas-list-heading"><h1>会话目录</h1><span>本页 ' + str(len(groups)) + ' 个会话 · 共 ' + str(result['total']) + ' 个回合</span></header>'
-    body += selection_toolbar(back) + '<div class="atlas-session-list">'
+    body += '<div class="atlas-session-list">'
     for index, (session, entries) in enumerate(groups):
         label = session['name'] or session['id']
         choice = selection_checkbox(session['source']['instance'], session['id'], label)
@@ -693,7 +698,7 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
             body += f'<a href="{escape(href, quote=True)}">{label}</a>'
     body += '</nav></section><section class="atlas-detail"><header class="atlas-detail-heading"><div><h2 data-atlas-name>'
     body += escape((groups[0][0]['name'] or groups[0][0]['id']) if groups else '暂无会话')
-    body += '</h2><p data-atlas-meta>' + (f'开始时间 {source_time(groups[0][0].get("createdAt"))} · 本页 {len(groups[0][1])} 个回合' if groups else '') + '</p><details data-key="directory:info"><summary>来源信息</summary><p data-atlas-source>' + escape(groups[0][0]['source']['instance'] if groups else '未知') + '</p></details></div></header><div class="atlas-detail-columns"><section class="atlas-turns"><h2>回合目录</h2>'
+    body += '</h2><p data-atlas-meta>' + (f'开始时间 {source_time(groups[0][0].get("createdAt"))} · 本页 {len(groups[0][1])} 个回合' if groups else '') + '</p><details data-key="directory:info"><summary>来源信息</summary><p data-atlas-source>' + escape(groups[0][0]['source']['instance'] if groups else '未知') + '</p></details></div>' + selection_toolbar(back) + '</header><div class="atlas-detail-columns"><section class="atlas-turns"><h2>回合目录</h2>'
     for index, (session, entries) in enumerate(groups):
         label = escape(session['name'] or session['id'], quote=True)
         meta = escape(f'开始时间 {source_time(session.get("createdAt"))} · 本页 {len(entries)} 个回合', quote=True)
@@ -751,8 +756,8 @@ def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
     if not result["total"]:
         return ('<section class="source" role="status"><h2>未找到相关内容</h2>'
                 f'<p>当前范围内没有匹配“{escape(result["query"])}”的已保存正文。请尝试其他关键词，或扩大搜索范围。</p></section>')
-    body = f'<p role="status">共 {result["total"]} 条记录；当前第 {result["offset"] + 1}—{min(result["total"], result["offset"] + result["limit"])} 条，每页最多 {result["limit"]} 条。按会话开始时间排列。</p>'
-    body += selection_toolbar('/search?' + urlencode(options))
+    body = f'<section class="search-results-summary" aria-label="搜索结果操作"><p role="status">共 {result["total"]} 条记录 · 当前第 {result["offset"] + 1}—{min(result["total"], result["offset"] + result["limit"])} 条</p>'
+    body += selection_toolbar('/search?' + urlencode(options)) + '</section>'
     seen_sessions: set[tuple[str, str]] = set()
     labels = {"text": "消息正文", "result": "工具返回文本", "error": "工具错误文本"}
     for hit in result["results"]:
@@ -769,7 +774,9 @@ def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
         body += f'<article class="message search-result">{choice}<h2><a href="{escape(href, quote=True)}">{kind} · {escape(hit["sessionName"] or "未命名会话")}</a></h2>'
         state = f' · {completeness}' if hit["completeness"] != "complete" else ''
         body += f'<p class="count">项目：{escape(hit["project"]["label"])}{state}</p>'
-        body += f'<pre>{escape(hit["snippet"])}</pre>'
+        query = result['query']
+        highlighted = ('<mark>' + escape(query) + '</mark>').join(escape(part) for part in hit['snippet'].split(query))
+        body += f'<pre>{highlighted}</pre>'
         body += ''.join(f'<p class="gap">{escape(reason)}</p>' for reason in hit["reasons"])
         body += f'<footer><a href="{escape(hit["evidenceUrl"], quote=True)}" target="_blank" rel="noopener">查看来源证据 ↗</a> · 点击标题查看完整原文。</footer></article>'
     for label, offset in (("上一页", max(0, result["offset"] - result["limit"]) if result["offset"] else None), ("下一页", result["nextOffset"])):
