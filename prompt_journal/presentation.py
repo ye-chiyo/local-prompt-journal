@@ -123,11 +123,13 @@ main:not(:has(.directory-layout)) { padding: 28px 32px; max-width: 1200px; margi
 .message.agent { background: var(--agent-soft); }
 .message summary { cursor: pointer; }
 .message .label { font-size: 14px; font-weight: 650; }
+.message-heading { display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; width: calc(100% - 22px); }
+.message-time { color: var(--muted); font-size: 12px; font-weight: 400; }
 .phase { color: var(--muted); font-size: 12px; margin-left: 14px; }
 .message pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.85 'Segoe UI', 'Microsoft YaHei', sans-serif; margin: 20px 0; max-width: 75ch; }
-.message footer { border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.message footer { padding-top: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .message footer code { display: block; font-size: 11px; margin-top: 8px; }
-.message-source { margin-top: 12px; }
+.message-source { margin-top: 6px; }
 .message-source summary { color: var(--accent); font-size: 13px; }
 .message-source a { display: inline-block; margin-top: 8px; }
 .gap { color: var(--warning); font-size: 13px; margin: 10px 0; }
@@ -256,6 +258,7 @@ mark { background: #f6e3a8; color: #27364b; border-radius: 2px; }
 .atlas-reader-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .atlas-reader-header a { font-size: 13px; }
 .atlas-placeholder { color: var(--muted); font-size: 14px; }
+.atlas-placeholder:empty { display: none; }
 .atlas-reader .turn>h2 { display: none; }
 .atlas-reader .message { padding: 16px; margin: 0 0 14px; }
 .atlas-reader .message pre { font-size: 16px; line-height: 1.8; margin: 12px 0; }

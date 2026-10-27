@@ -200,9 +200,65 @@ document.addEventListener('submit', event => {
   }
 });
 let atlasRequest = 0;
-document.addEventListener('click', async event => {
+let atlasController = null;
+async function loadAtlasTurn(link) {
+  const request = ++atlasRequest;
+  atlasController?.abort();
+  const controller = new AbortController();
+  atlasController = controller;
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  const content = document.querySelector('[data-reader-content]');
+  const status = document.querySelector('[data-reader-status]');
+  const open = document.querySelector('[data-reader-open]');
+  for (const item of document.querySelectorAll('[data-atlas-turn]')) {
+    item.classList.toggle('selected', item === link);
+    if (item === link) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  }
+  document.querySelector('[data-reader-title]').textContent = '回合 ' + link.dataset.turnOrdinal;
+  content.replaceChildren();
+  content.setAttribute('aria-busy', 'true');
+  status.textContent = '正在加载回合正文…';
+  open.href = link.href;
+  open.hidden = false;
+  try {
+    const url = new URL(link.href);
+    url.searchParams.set('view', 'reader');
+    const response = await fetch(url, {signal:controller.signal});
+    if (!response.ok) throw new Error();
+    const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const turn = doc.querySelector('.turn');
+    if (!turn) throw new Error();
+    if (request !== atlasRequest) return;
+    const versionNote = doc.querySelector('[data-reader-version]');
+    content.replaceChildren(...[versionNote, turn].filter(Boolean));
+    status.textContent = '';
+    content.closest('.atlas-reader').scrollTop = 0;
+    for (const node of content.querySelectorAll('[data-lazy-url]')) {
+      let visible = true;
+      for (let parent = node.parentElement; parent && parent !== content; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS' && !parent.open) visible = false;
+      }
+      if (visible) loadLazyContent(node);
+    }
+  } catch {
+    if (request !== atlasRequest) return;
+    status.textContent = '正文加载失败，请重试或打开独立页面。';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.dataset.readerRetry = '';
+    retry.textContent = '重试加载';
+    content.replaceChildren(retry);
+  } finally {
+    clearTimeout(timeout);
+    if (request === atlasRequest) content.setAttribute('aria-busy', 'false');
+  }
+}
+document.addEventListener('click', event => {
   const sessionButton = event.target.closest('[data-select-group]');
   if (sessionButton) {
+    atlasRequest++;
+    atlasController?.abort();
     const id = sessionButton.dataset.selectGroup;
     for (const row of document.querySelectorAll('.atlas-session-row')) row.classList.toggle('selected', row.dataset.group === id);
     for (const button of document.querySelectorAll('[data-select-group]')) button.setAttribute('aria-pressed', String(button === sessionButton));
@@ -216,41 +272,22 @@ document.addEventListener('click', async event => {
     document.querySelector('[data-atlas-meta]').textContent = group.dataset.meta;
     document.querySelector('[data-atlas-source]').textContent = group.dataset.source;
     document.querySelector('[data-reader-title]').textContent = '回合正文';
-    document.querySelector('[data-reader-content]').textContent = '选择一个回合，正文将在这里显示。';
+    const content = document.querySelector('[data-reader-content]');
+    content.replaceChildren();
+    content.setAttribute('aria-busy', 'false');
+    document.querySelector('[data-reader-status]').textContent = '选择一个回合，正文将在这里显示。';
     document.querySelector('[data-reader-open]').hidden = true;
-    atlasRequest++;
+    return;
+  }
+  if (event.target.closest('[data-reader-retry]')) {
+    const selected = document.querySelector('[data-atlas-turn][aria-current]');
+    if (selected) loadAtlasTurn(selected);
     return;
   }
   const link = event.target.closest('[data-atlas-turn]');
   if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0) return;
   event.preventDefault();
-  const request = ++atlasRequest;
-  const content = document.querySelector('[data-reader-content]');
-  const open = document.querySelector('[data-reader-open]');
-  for (const item of document.querySelectorAll('[data-atlas-turn]')) {
-    item.classList.toggle('selected', item === link);
-    if (item === link) item.setAttribute('aria-current', 'true');
-    else item.removeAttribute('aria-current');
-  }
-  document.querySelector('[data-reader-title]').textContent = '回合 ' + link.dataset.turnOrdinal;
-  content.textContent = '正在加载回合正文…';
-  open.hidden = true;
-  try {
-    const response = await fetch(link.href);
-    if (!response.ok) throw new Error();
-    const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-    const turn = doc.querySelector('main .turn');
-    if (!turn) throw new Error();
-    if (request !== atlasRequest) return;
-    content.replaceChildren(turn);
-    open.href = link.href;
-    open.hidden = false;
-  } catch {
-    if (request !== atlasRequest) return;
-    content.textContent = '正文加载失败，请重试或打开独立页面。';
-    open.href = link.href;
-    open.hidden = false;
-  }
+  loadAtlasTurn(link);
 });
 document.addEventListener('focusin', event => selectDirectoryGroup(event.target.closest('.session-group')));
 document.addEventListener('click', event => {
@@ -286,7 +323,7 @@ async function update() {
       indicator.classList.toggle('error', Boolean(status.error));
       indicator.dataset.state = status.error ? 'error' : status.running ? 'running' : 'stopped';
     }
-    const canRefresh = !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])');
+    const canRefresh = !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open], details[data-key="directory:info"][open]');
     if (version !== null && current !== version && canRefresh) {
       const html = await fetch(location.pathname + location.search);
       if (!html.ok) throw new Error();
@@ -586,12 +623,13 @@ def session_body(session: dict[str, Any], return_to: str | None = None, turn_num
             lazy_url = build_lazy_url(thread, message["id"], source["instance"], "message", "text", session.get("savedAt"), turn_id=turn['id'])
             open_attribute = '' if len(message["text"]) > LAZY_TEXT_LIMIT else ' open'
             message_text = value_pre(message["text"], lazy_url, 'text')
-            body += f'<details id="{anchor}"{open_attribute} data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="label">{label}</span><span class="phase">{completeness}</span></summary>{message_text}'
+            message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
+            warning = f'<span class="phase">{completeness}</span>' if message["completeness"] != 'complete' else ''
+            body += f'<details id="{anchor}"{open_attribute} data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="message-heading"><span class="label">{label}</span><span class="message-time">{escape(message_time)}</span></span>{warning}</summary>{message_text}'
             for reason in message["reasons"]:
                 body += f'<p class="gap">{escape(reason)}</p>'
             body += attachments_html(session, message)
-            message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
-            body += f'<footer><span>来源时间：{escape(message_time)}</span><details class="message-source" data-key="{thread}:{escape(turn["id"], quote=True)}:source:{escape(message["id"], quote=True)}"><summary>来源信息</summary><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看消息来源证据 ↗</a><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}<br>保存版本：{escape(session["savedAt"])}</code></details></footer></details>'
+            body += f'<footer><details class="message-source" data-key="{thread}:{escape(turn["id"], quote=True)}:source:{escape(message["id"], quote=True)}"><summary>来源信息</summary><p>{completeness} · 来源时间：{escape(message_time)}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看消息来源证据 ↗</a><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}<br>保存版本：{escape(session["savedAt"])}</code></details></footer></details>'
         if execution_count:
             gaps = ''.join(f'<p class="gap">{escape(gap)}</p>' for gap in session.get("executionGaps", []))
             body += f'<details class="source execution" data-key="{thread}:{escape(turn["id"], quote=True)}:execution"><summary>工具调用与最终结果 · {execution_count} 条记录</summary><p class="muted">每次工具调用展示最后保存的状态与完整结果；进行中的调用如实标明。历史保存观察可从原始证据与导出核对。</p>{execution_body}</details>'
@@ -665,7 +703,7 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
             state = entry['status'] if entry['status'] in states else 'unknown'
             body += f'<li><a data-atlas-turn data-turn-ordinal="{entry["ordinal"]}" href="{escape(href, quote=True)}"><strong>回合 {entry["ordinal"]}</strong><span class="status" data-state="{state}">{states.get(entry["status"], "状态未知")}</span></a></li>'
         body += '</ul></div>'
-    body += '</section><section class="atlas-reader" aria-label="回合正文"><div class="atlas-reader-header"><h2 data-reader-title>回合正文</h2><a data-reader-open hidden>打开独立页面 ↗</a></div><div data-reader-content><p class="atlas-placeholder">选择一个回合，正文将在这里显示。</p></div></section></div></section></div>'
+    body += '</section><section class="atlas-reader" aria-label="回合正文"><div class="atlas-reader-header"><h2 data-reader-title>回合正文</h2><a data-reader-open hidden>打开独立页面 ↗</a></div><p data-reader-status role="status" class="atlas-placeholder">选择一个回合，正文将在这里显示。</p><div data-reader-content aria-busy="false"></div></section></div></section></div>'
     return body
 
 
@@ -1028,9 +1066,13 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     if destination.scheme or destination.netloc or not (destination.path.startswith('/project/') or destination.path == '/search' or (destination.path.startswith('/session/') and destination.path.count('/') == 2)):
                         back = '/project/' + session['project']['id']
                     navigation = turn_navigation(result, back)
-                    version_note = '<p class="count">正在查看命中时的保存版本；原文与证据固定在该版本。</p>' if options.get('saved') else ''
-                    body = navigation + version_note + session_body(session, back, result['ordinal']) + navigation
-                    self.respond(200, 'text/html', page(f'回合 {result["ordinal"]}', body, reading=True, projects=app.project_choices(), project_id=session['project']['id']))
+                    version_note = '<p class="count" data-reader-version>正在查看命中时的保存版本；原文与证据固定在该版本。</p>' if options.get('saved') else ''
+                    content = version_note + session_body(session, back, result['ordinal'])
+                    if options.get('view') == ['reader']:
+                        self.respond(200, 'text/html', content)
+                    else:
+                        body = navigation + content + navigation
+                        self.respond(200, 'text/html', page(f'回合 {result["ordinal"]}', body, reading=True, projects=app.project_choices(), project_id=session['project']['id']))
                 elif len(segments) == 2 and segments[0] == "session":
                     result = app.session_turns(segments[1], instance, options.get('saved', [None])[0],
                         int(options.get('offset', ['0'])[0]), int(options.get('limit', ['30'])[0]), options.get('target', [None])[0])
