@@ -32,6 +32,10 @@ def external_path(path: Path | str) -> Path:
     return destination
 
 
+class CapacityReached(HistoryError):
+    pass
+
+
 class Journal:
     def __init__(self, data_dir: Path | str | None = None):
         self.data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
@@ -48,6 +52,28 @@ class Journal:
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database, timeout=10)
+
+    def capacity(self, db: sqlite3.Connection | None = None) -> dict[str, Any]:
+        if db is None:
+            with closing(self._connect()) as connection:
+                return self.capacity(connection)
+        page_size = db.execute('PRAGMA page_size').fetchone()[0]
+        page_count = db.execute('PRAGMA page_count').fetchone()[0]
+        free_pages = db.execute('PRAGMA freelist_count').fetchone()[0]
+        row = db.execute("SELECT value FROM collection_state WHERE key='capacity_limit_bytes'").fetchone()
+        limit = int(row[0]) if row else None
+        used = (page_count - free_pages) * page_size
+        return {'usedBytes': used, 'limitBytes': limit, 'paused': bool(limit and used >= limit)}
+
+    def set_capacity(self, limit: int | None) -> None:
+        if limit is not None and not 1024 * 1024 <= limit <= 1024 ** 4:
+            raise ValueError('容量须在 1 MiB 至 1 TiB 之间。')
+        with closing(self._connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            if limit is None:
+                db.execute("DELETE FROM collection_state WHERE key='capacity_limit_bytes'")
+            else:
+                db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('capacity_limit_bytes',?)", (str(limit),))
 
     def compact(self, backup: Path | str) -> dict[str, Any]:
         return compact(self.database, external_path(backup))
@@ -146,6 +172,8 @@ class Journal:
                 session = package['session']
             row = db.execute("SELECT package FROM snapshots WHERE instance=? AND thread=? ORDER BY number DESC LIMIT 1",
                              (session["source"]["instance"], thread_id)).fetchone()
+            if not row and self.capacity(db)['paused']:
+                raise CapacityReached('数据库已达到设置容量，暂停保存新会话。')
             if row:
                 previous_package = decode_package(row[0])
                 previous = previous_package["session"]

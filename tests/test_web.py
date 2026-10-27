@@ -1,4 +1,7 @@
 import json
+import io
+from contextlib import closing
+import zipfile
 import sqlite3
 import re
 from html import unescape
@@ -9,7 +12,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from prompt_journal import Journal, CodexHistory
@@ -82,7 +85,7 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertNotIn("正在核对中文。", html)
         self.assertNotIn('数据库文件', html)
         self.assertNotIn('aria-label="搜索已保存正文"', html)
-        self.assertNotIn("来源实例：", html)
+        self.assertIn('<details data-key="directory:info"><summary>来源信息</summary>', html)
         self.assertNotIn("以下按来源会话开始时间升序排列", html)
 
     def test_project_directory_and_automatic_polling_work_without_reading_snapshot_bodies(self):
@@ -147,6 +150,57 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertIn('href="/status"', html)
         self.assertNotIn('数据库文件', html)
         self.assertIn('请记录原文。', html)
+
+    def test_selected_sessions_can_be_exported_and_deleted_after_review(self):
+        saved = self.app.save_capture(catalog_capture('selected-second', 100))
+        instance = saved['source']['instance']
+        first = json.dumps([instance, 'selected-second'])
+        project = saved['project']['id']
+        directory = urlopen(self.url + '/project/' + project).read().decode()
+        self.assertIn('导出所选', directory)
+        self.assertIn('删除所选', directory)
+        search = urlopen(self.url + '/search?' + urlencode({'q': '目录不应加载的正文'})).read().decode()
+        self.assertIn('导出所选', search)
+        selection = {'session': first, 'return': '/project/' + project, 'action': 'export'}
+        review = urlopen(self.url + '/selection?' + urlencode(selection)).read().decode()
+        self.assertIn('确认导出会话', review)
+        token = re.search(r'name="token" value="([^"]+)"', review).group(1)
+        data = urlencode({**selection, 'token': token}).encode()
+        with urlopen(Request(self.url + '/selection', data=data)) as response:
+            with zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+                self.assertEqual(archive.namelist(), ['session-001.zip'])
+                with zipfile.ZipFile(io.BytesIO(archive.read('session-001.zip'))) as bundle:
+                    self.assertIn('session.json', bundle.namelist())
+        selection['action'] = 'delete'
+        review = urlopen(self.url + '/selection?' + urlencode(selection)).read().decode()
+        self.assertIn('不改变 Codex 原会话', review)
+        self.assertTrue(self.app.session_summary('selected-second', instance))
+        result = urlopen(Request(self.url + '/selection', data=urlencode({**selection, 'token': token}).encode())).read().decode()
+        self.assertIn('已删除', result)
+        self.assertTrue(any(entry['id'] == 'selected-second' for entry in self.app.exclusions()))
+        self.assertTrue(self.app.session('sample-session'))
+
+    def test_database_capacity_pauses_new_sessions_and_resumes_after_space_released(self):
+        self.app.save_capture(catalog_capture('existing-capacity', 100))
+        self.app.set_capacity(1024 * 1024)
+        with closing(sqlite3.connect(self.app.database)) as db, db:
+            db.execute('CREATE TABLE capacity_fixture (payload BLOB)')
+            db.execute('INSERT INTO capacity_fixture VALUES (?)', (b'x' * (2 * 1024 * 1024),))
+        self.assertTrue(self.app.capacity()['paused'])
+        from prompt_journal.app import CapacityReached
+        with self.assertRaises(CapacityReached):
+            self.app.save_capture(catalog_capture('new-capacity', 200))
+        self.app.save_capture(catalog_capture('existing-capacity', 100))
+        with closing(sqlite3.connect(self.app.database)) as db, db:
+            db.execute('DELETE FROM capacity_fixture')
+        self.assertFalse(self.app.capacity()['paused'])
+        self.app.save_capture(catalog_capture('new-capacity', 200))
+        capacity_page = urlopen(self.url + '/capacity').read().decode()
+        self.assertIn('数据库容量', capacity_page)
+        token = re.search(r'name="token" value="([^"]+)"', capacity_page).group(1)
+        form = urlencode({'token': token, 'amount': '2', 'unit': 'MiB'}).encode()
+        self.assertIn('容量设置已保存', urlopen(Request(self.url + '/capacity', data=form)).read().decode())
+        self.assertEqual(self.app.capacity()['limitBytes'], 2 * 1024 * 1024)
 
     def test_large_message_is_loaded_on_expand_without_initial_html(self):
         large = "大文本原文-" + ("x" * 70_000)

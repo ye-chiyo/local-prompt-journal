@@ -63,7 +63,7 @@ class IndependentTurnAcceptance(unittest.TestCase):
                     self.assertIn('/session/catalog-1/turn/turn-two?', directory)
                     self.assertNotIn('第一回合原文', directory)
                     self.assertNotIn('数据库文件', directory)
-                    self.assertNotIn('search-form', directory.split('<main>')[1])
+                    self.assertNotIn('search-form', directory.split('<main', 1)[1])
                     route = '/session/catalog-1/turn/turn?source=catalog-fixture'
                     html = read(route)
                     self.assertIn('新版第一回合', html)

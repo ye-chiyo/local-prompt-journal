@@ -173,6 +173,9 @@ class ManagedDeletionAcceptance(unittest.TestCase):
         session = urlopen(base + '/session/main').read().decode('utf-8')
         self.assertIn('删除此会话的受管理日志', session)
         html = urlopen(base + '/manage/delete/main').read().decode('utf-8')
+        project_link = '/project/' + self.app.session('main')['project']['id']
+        for page in (session, html):
+            self.assertIn('href="' + project_link + '"', page.split('<div class="project-nav">', 1)[1].split('</div>', 1)[0])
         self.assertIn('不改变 Codex 原会话', html)
         self.assertIn('另存的导出副本', html)
         token = re.search(r'name="token" value="([^"]+)"', html).group(1)

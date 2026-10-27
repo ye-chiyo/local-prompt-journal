@@ -7,7 +7,7 @@ import time
 import sys
 from typing import Any, BinaryIO
 
-from .app import Journal
+from .app import CapacityReached, Journal
 from .source import CodexHistory, HistoryError, now
 from .topology import remember_relation_metadata
 
@@ -113,6 +113,8 @@ class Collector:
                                     if previously_in_scope:
                                         raise HistoryError("来源本次未返回先前已保存的范围内回合；保留已有记录，内容缺失或不可见，未宣称恢复。")
                                     results.append({"id": thread["id"], "source": source.instance(), "status": "outsideScope", "error": None})
+                            except CapacityReached as exc:
+                                results.append({"id": thread["id"], "source": source.instance(), "status": "capacityPaused", "error": str(exc)})
                             except Exception as exc:
                                 results.append({"id": thread["id"], "source": source.instance(), "status": "error", "error": str(exc)})
                         if self.stopping.is_set():
