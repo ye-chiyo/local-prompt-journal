@@ -39,4 +39,4 @@ web
 
 ## Current Specification
 
-当前方向及交互以[视觉与交互规格](.scratch/ui-polish/spec.md)为准，颜色、排版与尺寸以[设计系统](DESIGN.md)为准。方向与验收范围已获确认，不重复询问。完整同尺寸视觉对照尚未完成，规范整理不代表实现已验收。
+当前方向及交互以[视觉与交互规格](.scratch/ui-polish/spec.md)为准，颜色、排版与尺寸以[设计系统](DESIGN.md)为准。方向与验收范围已获确认，不重复询问。两组PC视觉与主路径验收已完成，范围与证据见[验收记录](.scratch/ui-polish/acceptance.md)。正式服务更新与整分支代码审查单独记录，不以文档状态替代发布证明。
