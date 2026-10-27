@@ -22,6 +22,10 @@ from .presentation import STYLE, icon
 LAZY_TEXT_LIMIT = 64 * 1024
 
 
+def project_name(label: str) -> str:
+    return label.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or label
+
+
 def page(title: str, body: str, reading: bool = False, active: str = 'projects',
          projects: list[dict[str, Any]] | None = None, project_id: str | None = None) -> str:
     main_class = ' class="reader"' if reading else ''
@@ -30,11 +34,11 @@ def page(title: str, body: str, reading: bool = False, active: str = 'projects',
     status_current = ' aria-current="true"' if active == 'status' else ''
     manage_current = ' aria-current="true"' if active == 'manage' else ''
     project_links = ''
-    names = [p['label'].replace('\\', '/').rstrip('/').rsplit('/', 1)[-1] or p['label'] for p in projects or []]
+    names = [project_name(p['label']) for p in projects or []]
     for project in projects or []:
         selected = ' aria-current="page"' if project['id'] == project_id else ''
         label = project['label']
-        short_name = label.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1] or label
+        short_name = project_name(label)
         name = f'{short_name} · {label}' if names.count(short_name) > 1 else short_name
         project_links += f'<a href="/project/{quote(project["id"], safe="")}" title="{escape(label, quote=True)}"{selected}>{icon("folder")}<span>{escape(name)}</span></a>'
     header = (f'<header class="app-header"><a class="brand" href="/">{icon("brand")}<strong>本机会话记录</strong></a>'
@@ -892,8 +896,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     self.respond(200, 'text/html', page('确认删除', body, active='manage', projects=app.project_choices(), project_id=session['project']['id']))
                 elif url.path == "/":
                     projects = app.project_choices()
-                    items = ''.join(f'<li><h2><a href="/project/{p["id"]}">{escape(p["label"])}</a></h2><p>{p["sessionCount"]} 个已保存会话 · 归属依据：{escape(p["basis"])}</p></li>' for p in projects)
-                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见上方。</p></div>' if not items else ""
+                    items = ''.join(f'<li><h2><a href="/project/{quote(p["id"], safe="")}">{escape(project_name(p["label"]))}</a></h2><p class="project-path">{escape(p["label"])}</p><p>{p["sessionCount"]} 个已保存会话</p></li>' for p in projects)
+                    empty = '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见采集状态。</p></div>' if not items else ""
                     archive = '<h1>项目归档</h1><ul class="session-list">' + items + '</ul>' + empty
                     content = archive
                     self.respond(200, "text/html", page("项目归档", content, projects=projects))

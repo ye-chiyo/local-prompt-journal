@@ -5,6 +5,7 @@ import zipfile
 import sqlite3
 import re
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 import sys
 import tempfile
@@ -74,6 +75,43 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             urlopen(self.url + "/session/missing")
         self.assertEqual(error.exception.code, 404)
+
+    def test_project_home_uses_short_names_with_visible_paths_for_same_named_projects(self):
+        for identity, cwd in (("first-workspace", "C:/工作区/日志项目"), ("second-workspace", "D:/工作区/日志项目")):
+            capture = catalog_capture(identity)
+            capture["thread"]["cwd"] = cwd
+            self.app.save_capture(capture)
+
+        class ProjectLinks(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.links = []
+                self.current = None
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "a":
+                    self.current = [dict(attrs).get("href"), ""]
+
+            def handle_data(self, data):
+                if self.current is not None:
+                    self.current[1] += data
+
+            def handle_endtag(self, tag):
+                if tag == "a" and self.current is not None:
+                    self.links.append(self.current)
+                    self.current = None
+
+        home = urlopen(self.url + "/").read().decode()
+        parsed = ProjectLinks()
+        parsed.feed(home)
+        for project in self.app.project_choices():
+            if "工作区" not in project["label"]:
+                continue
+            self.assertIn(["/project/" + project["id"], "日志项目"], parsed.links)
+            self.assertIn(project["label"], home)
+            project_page = urlopen(self.url + "/project/" + project["id"]).read().decode()
+            self.assertIn("目录会话-", project_page)
+            self.assertNotIn("目录不应加载的正文", project_page)
 
     def test_project_page_lists_sessions_without_rendering_each_full_timeline(self):
         project_id = self.app.projects()[0]["id"]
