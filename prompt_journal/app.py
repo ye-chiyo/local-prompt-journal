@@ -5,8 +5,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-import hashlib
 from typing import Any
+from urllib.parse import quote
 
 from .source import CodexHistory, HistoryError, now
 from .tool_evidence import TOOL_TYPES, tool_record, require_command_exit
@@ -14,6 +14,11 @@ from .topology import EXECUTION_GAPS, RELATION_GAPS, executions, relocate, relat
 from .search import search_sessions
 from .attachments import archive_attachments, attachment_view, read_copy
 from .deletion import ManagedDeletion, excluded, filter_state
+from . import catalog
+from . import turns as turn_store
+from .catalog import project_identity, session_order
+from .storage import decode_package, encode_package, compact
+from . import retention
 
 
 def default_data_dir() -> Path:
@@ -34,12 +39,21 @@ class Journal:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.data_dir / "journal.sqlite3"
         with closing(self._connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
             db.execute("CREATE TABLE IF NOT EXISTS snapshots (number INTEGER PRIMARY KEY, instance TEXT NOT NULL, thread TEXT NOT NULL, saved TEXT NOT NULL, package TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS collection_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            catalog.initialize(db)
+            turn_store.initialize(db)
         self._deletion = ManagedDeletion(self.database, self.data_dir)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.database, timeout=10)
+
+    def compact(self, backup: Path | str) -> dict[str, Any]:
+        return compact(self.database, external_path(backup))
+
+    def prune_tools(self, backup: Path | str) -> dict[str, Any]:
+        return retention.prune_tools(self.database, external_path(backup))
 
     def delete_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         return self._deletion.delete(thread_id, instance)
@@ -126,10 +140,14 @@ class Journal:
             db.execute('BEGIN IMMEDIATE')
             if excluded(db, session['source']['instance'], thread_id):
                 raise HistoryError('会话已删除排除；读取期间的删除不会被迟到快照覆盖。')
+            dialogue_only = retention.enabled(db)
+            if dialogue_only:
+                package = retention.dialogue_package(package)
+                session = package['session']
             row = db.execute("SELECT package FROM snapshots WHERE instance=? AND thread=? ORDER BY number DESC LIMIT 1",
                              (session["source"]["instance"], thread_id)).fetchone()
             if row:
-                previous_package = json.loads(row[0])
+                previous_package = decode_package(row[0])
                 previous = previous_package["session"]
                 scope = session["source"].get("scope")
                 if scope:
@@ -163,55 +181,60 @@ class Journal:
                         {e["type"] for e in kept_entries if e["type"] not in TOOL_TYPES | {"userMessage", "agentMessage"}})
                     package["evidence"] = [previous_package["evidence"][i] for i in indices] + package["evidence"]
                     # Compare against the original, unmodified saved document.
-                    previous = json.loads(row[0])["session"]
+                    previous = decode_package(row[0])["session"]
                 old_ids = {(m["turnId"], m["id"]) for group in ("messages", "tools", "unsupportedItems") for m in previous.get(group, [])}
                 new_ids = {(m["turnId"], m["id"]) for group in ("messages", "tools", "unsupportedItems") for m in session.get(group, [])}
                 if old_ids - new_ids:
                     raise HistoryError("来源本次缺少先前已保存条目；保留原快照与证据，缺失内容不能宣称已恢复。")
-                old_evidence = evidence_payloads(json.loads(row[0])["evidence"])
-                new_evidence = evidence_payloads(package["evidence"])
-                archive_attachments(package, self.data_dir, json.loads(row[0]))
-                if ({k: v for k, v in previous.items() if k != "savedAt"} == {k: v for k, v in session.items() if k != "savedAt"}
-                        and old_evidence == new_evidence):
+                archive_attachments(package, self.data_dir, decode_package(row[0]))
+                if dialogue_only:
+                    same_content = retention.unchanged(decode_package(row[0]), package)
+                else:
+                    old_evidence = evidence_payloads(decode_package(row[0])["evidence"])
+                    new_evidence = evidence_payloads(package["evidence"])
+                    same_content = ({k: v for k, v in previous.items() if k != "savedAt"} == {k: v for k, v in session.items() if k != "savedAt"}
+                                    and old_evidence == new_evidence)
+                if same_content:
                     return previous
             else:
                 archive_attachments(package, self.data_dir)
-            db.execute("INSERT INTO snapshots(instance, thread, saved, package) VALUES (?, ?, ?, ?)",
-                       (session["source"]["instance"], thread_id, session["savedAt"], json.dumps(package, ensure_ascii=False)))
+            cursor = db.execute("INSERT INTO snapshots(instance, thread, saved, package) VALUES (?, ?, ?, ?)",
+                       (session["source"]["instance"], thread_id, session["savedAt"], encode_package(package)))
+            assert cursor.lastrowid is not None
+            catalog.save_summary(db, session, cursor.lastrowid)
+            turn_store.save(db, cursor.lastrowid, package)
         return session
 
     def _package(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         with closing(self._connect()) as db:
-            rows = db.execute("SELECT instance, package FROM snapshots WHERE thread=? ORDER BY number DESC", (thread_id,)).fetchall()
-        if instance is not None:
-            rows = [r for r in rows if r[0] == instance]
-        if saved_at is not None:
-            rows = [r for r in rows if json.loads(r[1])["session"]["savedAt"] == saved_at]
-        if not rows:
+            if instance is None:
+                identities = db.execute("SELECT DISTINCT instance FROM snapshots WHERE thread=?", (thread_id,)).fetchall()
+                if len(identities) > 1:
+                    raise ValueError("多个来源具有相同会话 ID；请指定来源实例。")
+                instance = identities[0][0] if identities else None
+            clause = " AND saved=?" if saved_at is not None else ""
+            values = [thread_id, instance] + ([saved_at] if saved_at is not None else [])
+            row = db.execute("SELECT package FROM snapshots WHERE thread=? AND instance=?" + clause + " ORDER BY number DESC LIMIT 1", values).fetchone()
+        if row is None:
             raise KeyError("本机尚未保存这个会话。")
-        if len({r[0] for r in rows}) > 1:
-            raise ValueError("多个来源具有相同会话 ID；请指定来源实例。")
-        return json.loads(rows[0][1])
+        return decode_package(row[0])
 
-    def session(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
-        return self._view_package(thread_id, instance, saved_at)["session"]
+    def session(self, thread_id: str, instance: str | None = None, saved_at: str | None = None,
+                include_history: bool = True) -> dict[str, Any]:
+        return self._view_package(thread_id, instance, saved_at, include_history)["session"]
 
     def search(self, query: str, project: str | None = None, thread: str | None = None,
                instance: str | None = None, offset: int = 0, limit: int = 30) -> dict[str, Any]:
         with closing(self._connect()) as db:
-            rows = db.execute("SELECT package FROM snapshots WHERE number IN (SELECT MAX(number) FROM snapshots GROUP BY instance, thread)").fetchall()
-        sessions = [json.loads(row[0])["session"] for row in rows]
-        for session in sessions:
-            session.setdefault("project", project_identity(session["thread"], session["source"]["instance"]))
-            session.setdefault("createdAt", session["thread"].get("createdAt"))
-        return search_sessions(sorted(sessions, key=session_order), query, project, thread, instance, offset, limit)
+            sessions = turn_store.searchable(db, project, thread, instance) if query.strip() else []
+        return search_sessions(sessions, query, project, thread, instance, offset, limit)
 
     def evidence(self, thread_id: str, index: int, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
         return self._package(thread_id, instance, saved_at)["evidence"][index]
 
     def attachment(self, thread_id: str, identity: str, instance: str | None = None,
-                   saved_at: str | None = None) -> tuple[dict[str, Any], bytes]:
-        session = self.session(thread_id, instance, saved_at)
+                   saved_at: str | None = None, turn_id: str | None = None) -> tuple[dict[str, Any], bytes]:
+        session = self.turn(thread_id, turn_id, instance, saved_at)['session'] if turn_id is not None else self.session(thread_id, instance, saved_at)
         attachment = next((a for a in session["attachments"] if a["id"] == identity), None)
         if attachment is None:
             raise KeyError("没有此附件引用。")
@@ -234,21 +257,46 @@ class Journal:
 
     def sessions(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as db:
-            rows = db.execute("SELECT package FROM snapshots WHERE number IN (SELECT MAX(number) FROM snapshots GROUP BY instance, thread) ORDER BY number DESC").fetchall()
-        summaries = []
-        for row in rows:
-            session = json.loads(row[0])["session"]
-            summaries.append({**{k: session[k] for k in ("id", "name", "savedAt", "source")},
-                "createdAt": session.get("createdAt", session["thread"].get("createdAt")),
-                "project": session.get("project", project_identity(session["thread"], session["source"]["instance"]))})
-        return sorted(summaries, key=session_order)
+            return catalog.summaries(db)
 
     def projects(self) -> list[dict[str, Any]]:
-        projects: dict[str, dict[str, Any]] = {}
-        for session in self.sessions():
-            project = session["project"]
-            projects.setdefault(project["id"], {**project, "sessions": []})["sessions"].append(session)
-        return sorted(projects.values(), key=lambda p: (p["label"], p["id"]))
+        with closing(self._connect()) as db:
+            return catalog.projects(db)
+
+    def project_sessions(self, project_id: str | None = None, offset: int = 0,
+                         limit: int = 30, query: str = "") -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return catalog.directory(db, project_id, offset, limit, query)
+
+    def project_choices(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as db:
+            return catalog.project_choices(db)
+
+    def session_summary(self, thread_id: str, instance: str) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return catalog.session_summary(db, thread_id, instance)
+
+    def project_turns(self, project_id: str, offset: int = 0, limit: int = 30,
+                      thread: str | None = None, instance: str | None = None) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return turn_store.directory(db, project_id, offset, limit, thread, instance)
+
+    def turn(self, thread_id: str, turn_id: str, instance: str | None = None,
+             saved_at: str | None = None) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            result = turn_store.read(db, thread_id, turn_id, instance, saved_at)
+        attachment_view({'session': result['session']}, self.data_dir)
+        for attachment in result['session'].get('attachments', []):
+            if attachment.get('url'):
+                attachment['url'] += '&turn=' + quote(turn_id, safe='')
+        for tool in result['session'].get('tools', []):
+            require_command_exit(tool)
+        return result
+
+    def session_turns(self, thread_id: str, instance: str | None = None, saved_at: str | None = None,
+                      offset: int = 0, limit: int = 30, target: str | None = None) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return turn_store.session_directory(db, thread_id, instance, saved_at, offset, limit, target)
 
     def collection_state(self) -> dict[str, Any]:
         with closing(self._connect()) as db:
@@ -260,20 +308,24 @@ class Journal:
             db.execute('BEGIN IMMEDIATE')
             db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('collector',?)", (json.dumps(filter_state(db, state), ensure_ascii=False),))
 
-    def _view_package(self, thread_id: str, instance: str | None = None, saved_at: str | None = None) -> dict[str, Any]:
+    def _view_package(self, thread_id: str, instance: str | None = None, saved_at: str | None = None,
+                      include_history: bool = True) -> dict[str, Any]:
         package = self._package(thread_id, instance, saved_at)
-        with closing(self._connect()) as db:
-            rows = db.execute("SELECT package FROM snapshots WHERE thread=? AND instance=? ORDER BY number",
-                              (thread_id, package["session"]["source"]["instance"])).fetchall()
-        if saved_at is not None:
-            selected = next(i for i, row in enumerate(rows) if json.loads(row[0])["session"]["savedAt"] == saved_at)
-            rows = rows[:selected + 1]
-        # Use one coherent history; a search target stays at its selected version.
-        package = json.loads(rows[-1][0])
+        revisions = []
+        if include_history:
+            with closing(self._connect()) as db:
+                # Pin history to the package selected above, even if a collector
+                # saves another version while this request is being rendered.
+                selected = db.execute("SELECT number FROM snapshots WHERE thread=? AND instance=? AND saved=? ORDER BY number DESC LIMIT 1",
+                                      (thread_id, package['session']['source']['instance'], package['session']['savedAt'])).fetchone()
+                if selected is None:
+                    raise KeyError("本机尚未保存这个会话。")
+                rows = db.execute("SELECT package FROM snapshots WHERE thread=? AND instance=? AND number<? ORDER BY number",
+                                  (thread_id, package['session']['source']['instance'], selected[0]))
+                revisions = [decode_package(row[0]) for row in rows]
         attachment_view(package, self.data_dir)
         for tool in package["session"].get("tools", []):
             require_command_exit(tool)
-        revisions = [json.loads(row[0]) for row in rows[:-1]]
         for revision in revisions:
             attachment_view(revision, self.data_dir)
         package["session"]["executions"] = executions(revisions + [package])
@@ -374,20 +426,6 @@ class Journal:
             "included": list(included), "omitted": omitted,
             "note": "仅包含此会话及显式选择的一层已归档关联会话（含父／子／分叉／交互）；不递归、不连接来源，不读取未归档目标。外部会话的证据未包含时 evidenceRef=null，ownerEvidenceRef 仅定位该所有者自己的保存文档。"}
         return json.dumps(package, ensure_ascii=False, indent=2)
-
-
-def project_identity(thread: dict[str, Any], instance: str) -> dict[str, Any]:
-    project_id, cwd = thread.get("projectId"), thread.get("cwd")
-    identity = [instance, "project", project_id] if project_id else [instance, "cwd", cwd] if cwd else [instance, "unknown"]
-    return {"id": hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest(),
-            "label": str(cwd or project_id or "项目未知"), "sourceInstance": instance,
-            "sourceProjectId": project_id, "cwd": cwd, "basis": "projectId" if project_id else "cwd" if cwd else "unknown"}
-
-
-def session_order(session: dict[str, Any]) -> tuple[Any, ...]:
-    created = session.get("createdAt")
-    known = isinstance(created, (int, float))
-    return (not known, created if known else 0, session["source"]["instance"], session["id"])
 
 
 def evidence_payloads(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:

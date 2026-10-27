@@ -66,7 +66,7 @@ class AttachmentAcceptance(unittest.TestCase):
         worker.start()
         self.addCleanup(server.shutdown)
         base = f'http://127.0.0.1:{server.server_port}'
-        html = urlopen(base + '/session/main').read().decode('utf-8')
+        html = urlopen(base + '/session/main/turn/turn').read().decode('utf-8')
         self.assertIn('已归档附件', html)
         self.assertIn('远端', html)
         self.assertEqual(urlopen(base + attachments[0]['url']).read(), PNG)

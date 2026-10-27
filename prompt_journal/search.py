@@ -75,7 +75,7 @@ def search_sessions(sessions: list[dict[str, Any]], query: str, project: str | N
                     start, end = max(0, position - 70), min(len(text), position + len(query) + 100)
                     anchor = item_anchor(source, session["id"], item["turnId"], item["id"], kind)
                     options = {"source": source, "saved": session["savedAt"], "target": anchor, "q": query, "field": field}
-                    route = "/session/" + quote(session["id"], safe="")
+                    route = "/session/" + quote(session["id"], safe="") + '/turn/' + quote(item['turnId'], safe='')
                     evidence_index = item["evidenceRef"].split("/")[2]
                     evidence_url = "/evidence/" + quote(session["id"], safe="") + "/" + evidence_index
                     evidence_url += "?" + urlencode({"source": source, "saved": session["savedAt"]})

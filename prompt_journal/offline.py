@@ -16,6 +16,8 @@ INSTRUCTIONS = """离线会话包 v1
 
 session.json：既有结构化导出（schemaVersion 保持兼容），包含原始 evidence、
 消息、工具状态、保存修订、关系及 exportScope。一层范围不会递归。
+如果 session.source.retention 为 dialogue-only-v1，仅包含消息及其来源摘录、
+消息附件与保存版本；工具及不支持条目已按用户要求移除，不包含完整协议响应。
 manifest.json：包格式版本、各保存版本的附件与来源关系、实际文件校验及缺失。
 attachments/：取得的原始字节。名字为校验身份，显示名在附件 name 中。
 
@@ -41,7 +43,7 @@ $manifest.files | ForEach-Object {
 def build_bundle(package: dict[str, Any], data_dir: Path) -> bytes:
     output = io.BytesIO()
     manifest: dict[str, Any] = {"bundleVersion": 1, "record": "session.json",
-        "representation": "规范化会话及来源原始响应；不是底层原生数据库的完整备份。",
+        "representation": "规范化会话及来源证据；实际保留范围见各版本 session.source.retention，不是底层原生数据库的完整备份。",
         "exportScope": package["exportScope"], "attachments": [], "missing": [], "files": []}
     files: dict[str, bytes] = {}
 

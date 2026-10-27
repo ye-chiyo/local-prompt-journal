@@ -9,6 +9,8 @@ from typing import Any
 
 from .attachments import managed_path
 from .source import now
+from .storage import decode_package
+from . import turns as turn_store
 
 
 def excluded(db: sqlite3.Connection, instance: str, thread: str) -> bool:
@@ -57,10 +59,12 @@ class ManagedDeletion:
             prior = db.execute('SELECT pending FROM deletions WHERE instance=? AND thread=?', (instance, thread)).fetchone()
             digests = set(json.loads(prior[0])) if prior else set()
             for (serialized,) in db.execute('SELECT package FROM snapshots WHERE instance=? AND thread=?', (instance, thread)):
-                digests.update(a['sha256'] for a in json.loads(serialized)['session'].get('attachments', []) if a.get('status') == 'saved')
+                digests.update(a['sha256'] for a in decode_package(serialized)['session'].get('attachments', []) if a.get('status') == 'saved')
             db.execute('INSERT INTO deletions(instance,thread,deleted_at,pending,error) VALUES (?,?,?,?,NULL) ON CONFLICT(instance,thread) DO UPDATE SET pending=excluded.pending,error=NULL',
                        (instance, thread, now(), json.dumps(sorted(digests))))
+            turn_store.delete(db, thread, instance)
             db.execute('DELETE FROM snapshots WHERE instance=? AND thread=?', (instance, thread))
+            db.execute('DELETE FROM session_catalog WHERE instance=? AND thread=?', (instance, thread))
             state = db.execute("SELECT value FROM collection_state WHERE key='collector'").fetchone()
             if state:
                 db.execute("UPDATE collection_state SET value=? WHERE key='collector'", (json.dumps(filter_state(db, json.loads(state[0])), ensure_ascii=False),))
@@ -77,7 +81,7 @@ class ManagedDeletion:
                 return
             retained: set[str] = set()
             for (serialized,) in db.execute('SELECT package FROM snapshots'):
-                retained.update(a['sha256'] for a in json.loads(serialized)['session'].get('attachments', []) if a.get('status') == 'saved')
+                retained.update(a['sha256'] for a in decode_package(serialized)['session'].get('attachments', []) if a.get('status') == 'saved')
             for source, identity, serialized in rows:
                 if thread is not None and (thread != identity or instance != source):
                     continue

@@ -6,6 +6,14 @@
 
 2026-10-26 修订：用户明确产品只需如实记录日志，要求撤回任务 07 本轮修改并改写后续任务。07、08 取消（wontfix，不登记完成）；后续流程为自动归档、浏览与中文搜索、证据核对、可选附件离线包、受管理删除。来源历史修订及任务 05 的来源关系不受影响。
 
+2026-10-27 收尾：用户已确认项目目录、单回合页面与工具清理通过并要求最终收尾。以下三项后续任务已验收完成并统一本地提交到 `codex/remaining-log-issues`，不自动 push；当前正式库只保留对话及消息附件，早期任务 02、05、06 中工具证据的历史验收状态不代表当前仍启用工具保存。保留范围见 [ADR 0002](../../docs/adr/0002-dialogue-only-retention.md)，实测与运行信息见 [最终交验记录](../../docs/verification/dialogue-only.md)。
+
+| 后续任务 | 执行状态 |
+| --- | --- |
+| [项目页分页目录与按需读取](../project-session-catalog/issues/01-project-session-catalog.md) | completed；已验收 |
+| [分组回合目录与独立回合阅读](../turn-pages/issues/01-turn-pages.md) | completed；已验收 |
+| [工具记录清理与只保留对话](../dialogue-only/issues/01-dialogue-only.md) | completed；已验收 |
+
 [正式规格](spec.md) 是功能范围与验收边界的依据。下表提供任务入口；当前状态以各任务文件为准。
 
 | 编号 | 任务 | 当前执行状态 | Blocked by |

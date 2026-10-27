@@ -83,6 +83,10 @@ def main() -> int:
     prober.add_argument("--expected", type=Path)
     prober.add_argument("--report", type=Path)
     commands.add_parser("list", help="查询已保存的本机会话")
+    compactor = commands.add_parser('compact', help='停服后无损压缩快照并回收空间；保留全部原文和版本')
+    compactor.add_argument('--backup', type=Path, required=True, help='新的源码外备份文件；不会覆盖已有文件')
+    pruner = commands.add_parser('prune-tools', help='停服并备份后，删除全部版本的工具与不支持条目；后续只保存对话')
+    pruner.add_argument('--backup', type=Path, required=True, help='新的源码外备份文件；附件原字节保留以支持恢复')
     commands.add_parser('exclusions', help='查看删除排除及未完成的附件清理')
     for name in ('delete', 'restore'):
         management = commands.add_parser(name, help='删除受管理日志并排除自动归档' if name == 'delete' else '显式解除删除排除；沿用原自动采集范围')
@@ -120,6 +124,10 @@ def main() -> int:
             print(json.dumps({"saved": True, "threadId": view["id"], "messageCount": len(view["messages"]), "dataDir": str(app.data_dir)}, ensure_ascii=False))
         elif args.command == "list":
             print(json.dumps(app.sessions(), ensure_ascii=False, indent=2))
+        elif args.command == 'compact':
+            print(json.dumps(app.compact(args.backup), ensure_ascii=False, indent=2))
+        elif args.command == 'prune-tools':
+            print(json.dumps(app.prune_tools(args.backup), ensure_ascii=False, indent=2))
         elif args.command == 'exclusions':
             print(json.dumps(app.exclusions(), ensure_ascii=False, indent=2))
         elif args.command in ('delete', 'restore'):

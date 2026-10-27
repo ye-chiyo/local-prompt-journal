@@ -44,13 +44,13 @@ class ToolEvidenceAcceptance(unittest.TestCase):
         for part in tool["evidenceRef"][2:].split("/"):
             node = node[int(part)] if isinstance(node, list) else node[part]
         self.assertEqual(node["aggregatedOutput"], "命令原文\n")
-        html = self.read("/session/sample-session")
+        html = self.read("/session/sample-session/turn/turn-1")
         self.assertIn("工具执行", html)
         self.assertIn("echo 样本", html)
         self.assertIn("命令原文\n", html)
         self.assertLess(html.index("正在核对中文。"), html.index("echo 样本"))
-        self.assertLess(html.index("原文已保留。"), html.index("执行过程 ·"))
-        self.assertLess(html.index("执行过程 ·"), html.index("echo 样本"))
+        self.assertLess(html.index("原文已保留。"), html.index("工具调用与最终结果 ·"))
+        self.assertLess(html.index("工具调用与最终结果 ·"), html.index("echo 样本"))
 
     def test_parallel_same_arguments_keep_separate_results_and_failure_after_reopen(self):
         view = json.loads(self.read("/api/session/sample-session"))
@@ -63,7 +63,7 @@ class ToolEvidenceAcceptance(unittest.TestCase):
         self.assertEqual(calls["parallel-b"]["error"], {"message": "乙失败"})
         self.assertEqual(calls["parallel-b"]["status"], "failed")
         self.assertEqual(calls["parallel-a"]["status"], "completed")
-        html = self.read("/session/sample-session")
+        html = self.read("/session/sample-session/turn/turn-1")
         failed = html.split('data-tool-id="parallel-b"')[1].split('</details>')[0]
         self.assertIn("执行失败", failed)
         self.assertIn("乙失败", failed)
@@ -72,7 +72,7 @@ class ToolEvidenceAcceptance(unittest.TestCase):
     def test_long_truncated_and_missing_results_remain_honest_and_evidence_is_locatable(self):
         package = json.loads(self.read("/export/sample-session"))
         calls = {t["id"]: t for t in package["session"]["tools"]}
-        html = self.read("/session/sample-session")
+        html = self.read("/session/sample-session/turn/turn-1")
         self.assertEqual(calls["dynamic-long"]["result"], [{"type": "inputText", "text": "长" * 8000 + "末尾原文"}])
         self.assertIn("长" * 8000 + "末尾原文", html)
         self.assertEqual(calls["cmd-cut"]["result"], "已取得前缀\nWarning: truncated output")
@@ -81,6 +81,7 @@ class ToolEvidenceAcceptance(unittest.TestCase):
         self.assertEqual((calls["missing"]["turnId"], calls["missing"]["status"], calls["missing"]["result"], calls["missing"]["completedAtMs"]),
                          ("turn-2", "inProgress", None, None))
         self.assertTrue(calls["missing"]["argumentsAvailable"])
+        html = self.read('/session/sample-session/turn/turn-2')
         pending = html.split('data-tool-id="missing"')[1].split('</details>')[0]
         self.assertIn("<pre>null</pre>", pending)
         self.assertNotIn("来源未提供请求参数", pending)
