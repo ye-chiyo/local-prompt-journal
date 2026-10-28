@@ -83,7 +83,8 @@ class CodexHistory:
             environment.pop("ELECTRON_GET_USE_PROXY", None)
             self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
-                                            env=environment)
+                                            env=environment,
+                                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             self.threads = [threading.Thread(target=self._read_stdout, daemon=True),
                             threading.Thread(target=self._read_stderr, daemon=True)]
             for thread in self.threads:

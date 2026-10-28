@@ -17,6 +17,10 @@ from .search import item_anchor
 GROUPS = ('messages', 'tools', 'unsupportedItems', 'attachments')
 
 
+def readable_count(body: dict[str, Any]) -> int:
+    return sum(len(body.get(group, [])) for group in ('messages', 'tools', 'unsupportedItems'))
+
+
 def save(db: sqlite3.Connection, number: int, package: dict[str, Any]) -> None:
     session = package['session']
     if 'attachments' not in session:
@@ -33,8 +37,8 @@ def save(db: sqlite3.Connection, number: int, package: dict[str, Any]) -> None:
         digest = hashlib.sha256(serialized).hexdigest()
         db.execute('INSERT OR IGNORE INTO turn_payloads(digest,body) VALUES (?,?)', (digest, encode_package(body)))
         started = turn.get('startedAt')
-        db.execute('INSERT INTO turn_entries(number,turn,ordinal,started,status,payload) VALUES (?,?,?,?,?,?)',
-                   (number, turn['id'], index + 1, started if isinstance(started, (int, float)) else None, turn.get('status'), digest))
+        db.execute('INSERT INTO turn_entries(number,turn,ordinal,started,status,payload,content_count) VALUES (?,?,?,?,?,?,?)',
+                   (number, turn['id'], index + 1, started if isinstance(started, (int, float)) else None, turn.get('status'), digest, readable_count(body)))
         for group, kind in (('messages', 'message'), ('tools', 'tool')):
             for entry in body[group]:
                 anchor = item_anchor(session['source']['instance'], session['id'], turn['id'], entry['id'], kind)
@@ -45,7 +49,14 @@ def initialize(db: sqlite3.Connection) -> None:
     db.execute('CREATE TABLE IF NOT EXISTS turn_snapshots(number INTEGER PRIMARY KEY,metadata TEXT NOT NULL)')
     db.execute('CREATE TABLE IF NOT EXISTS turn_payloads(digest TEXT PRIMARY KEY,body BLOB NOT NULL)')
     db.execute('''CREATE TABLE IF NOT EXISTS turn_entries(number INTEGER NOT NULL,turn TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,started REAL,status TEXT,payload TEXT NOT NULL,PRIMARY KEY(number,turn))''')
+        ordinal INTEGER NOT NULL,started REAL,status TEXT,payload TEXT NOT NULL,content_count INTEGER,PRIMARY KEY(number,turn))''')
+    if 'content_count' not in {row[1] for row in db.execute('PRAGMA table_info(turn_entries)')}:
+        db.execute('ALTER TABLE turn_entries ADD COLUMN content_count INTEGER')
+    # Inspect each distinct payload only once during upgrade. Directories continue
+    # to query metadata only, and full saved versions retain their source evidence.
+    pending = db.execute('SELECT digest,body FROM turn_payloads WHERE digest IN (SELECT payload FROM turn_entries WHERE content_count IS NULL)').fetchall()
+    for digest, value in pending:
+        db.execute('UPDATE turn_entries SET content_count=? WHERE payload=?', (readable_count(decode_package(value)), digest))
     db.execute('CREATE INDEX IF NOT EXISTS turn_order ON turn_entries(number,ordinal)')
     db.execute('CREATE INDEX IF NOT EXISTS turn_payload_refs ON turn_entries(payload)')
     db.execute('CREATE TABLE IF NOT EXISTS turn_items(number INTEGER NOT NULL,anchor TEXT NOT NULL,turn TEXT NOT NULL,PRIMARY KEY(number,anchor))')
@@ -72,7 +83,7 @@ def directory(db: sqlite3.Connection, project: str, offset: int = 0, limit: int 
     row = db.execute('SELECT summary FROM session_catalog WHERE project_id=? LIMIT 1', (project,)).fetchone()
     if row is None:
         raise KeyError('项目尚未保存')
-    where, values = 'c.project_id=?', [project]
+    where, values = 'c.project_id=? AND t.content_count>0', [project]
     if thread is not None:
         where += ' AND c.thread=? AND c.instance=?'
         values.extend([thread, instance or ''])
@@ -86,14 +97,38 @@ def directory(db: sqlite3.Connection, project: str, offset: int = 0, limit: int 
         'nextOffset': offset + limit if offset + limit < total else None}
 
 
+def project_page(db: sqlite3.Connection, project: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError('目录页起点须非负，每页会话数量须为 1—100。')
+    db.execute('BEGIN')
+    row = db.execute('SELECT summary FROM session_catalog WHERE project_id=? LIMIT 1', (project,)).fetchone()
+    if row is None:
+        raise KeyError('项目尚未保存')
+    where = 'project_id=? AND EXISTS (SELECT 1 FROM turn_entries t WHERE t.number=c.number AND t.content_count>0)'
+    total = db.execute('SELECT COUNT(*) FROM session_catalog c WHERE ' + where, (project,)).fetchone()[0]
+    if offset >= total:
+        offset = ((total - 1) // limit) * limit if total else 0
+    sessions = db.execute('SELECT number,summary FROM session_catalog c WHERE ' + where +
+                          ' ORDER BY created IS NULL,created,instance,thread LIMIT ? OFFSET ?', (project, limit, offset)).fetchall()
+    groups = []
+    for number, value in sessions:
+        session = json.loads(value)
+        count = db.execute('SELECT COUNT(*) FROM turn_entries WHERE number=? AND content_count>0', (number,)).fetchone()[0]
+        rows = db.execute('SELECT turn,ordinal,started,status FROM turn_entries WHERE number=? AND content_count>0 ORDER BY ordinal LIMIT 30', (number,))
+        entries = [{'session': session, 'id': r[0], 'ordinal': r[1], 'startedAt': r[2], 'status': r[3]} for r in rows]
+        groups.append({'session': session, 'turns': entries, 'total': count, 'nextOffset': 30 if count > 30 else None})
+    return {'project': json.loads(row[0])['project'], 'sessionGroups': groups, 'paginationUnit': 'sessions',
+            'total': total, 'offset': offset, 'limit': limit, 'nextOffset': offset + limit if offset + limit < total else None}
+
+
 def read(db: sqlite3.Connection, thread: str, turn: str, instance: str | None,
          saved: str | None) -> dict[str, Any]:
     db.execute('BEGIN')
     number, metadata = selected(db, thread, instance, saved)
-    row = db.execute('SELECT t.ordinal,p.body FROM turn_entries t JOIN turn_payloads p ON p.digest=t.payload WHERE t.number=? AND t.turn=?', (number, turn)).fetchone()
+    row = db.execute('SELECT t.ordinal,p.body FROM turn_entries t JOIN turn_payloads p ON p.digest=t.payload WHERE t.number=? AND t.turn=? AND t.content_count>0', (number, turn)).fetchone()
     if row is None:
         raise KeyError('本机未保存这个回合。')
-    neighbors = db.execute('SELECT turn,ordinal FROM turn_entries WHERE number=? AND ordinal IN (?,?) ORDER BY ordinal', (number, row[0] - 1, row[0] + 1)).fetchall()
+    neighbors = db.execute('SELECT turn,ordinal FROM turn_entries WHERE number=? AND content_count>0 AND ordinal=(SELECT MAX(ordinal) FROM turn_entries WHERE number=? AND content_count>0 AND ordinal<?) UNION ALL SELECT turn,ordinal FROM turn_entries WHERE number=? AND content_count>0 AND ordinal=(SELECT MIN(ordinal) FROM turn_entries WHERE number=? AND content_count>0 AND ordinal>?)', (number, number, row[0], number, number, row[0])).fetchall()
     return {'session': {**metadata, **decode_package(row[1])}, 'ordinal': row[0],
             'previous': next((r[0] for r in neighbors if r[1] < row[0]), None),
             'next': next((r[0] for r in neighbors if r[1] > row[0]), None)}
@@ -125,8 +160,8 @@ def session_directory(db: sqlite3.Connection, thread: str, instance: str | None,
         if row is None:
             raise KeyError('此保存版本未包含命中条目。')
         return {'target': row[0], 'session': metadata}
-    total = db.execute('SELECT COUNT(*) FROM turn_entries WHERE number=?', (number,)).fetchone()[0]
-    rows = db.execute('SELECT turn,ordinal,started,status FROM turn_entries WHERE number=? ORDER BY ordinal LIMIT ? OFFSET ?', (number, limit, offset))
+    total = db.execute('SELECT COUNT(*) FROM turn_entries WHERE number=? AND content_count>0', (number,)).fetchone()[0]
+    rows = db.execute('SELECT turn,ordinal,started,status FROM turn_entries WHERE number=? AND content_count>0 ORDER BY ordinal LIMIT ? OFFSET ?', (number, limit, offset))
     return {'project': metadata['project'], 'turns': [
         {'session': metadata, 'id': row[0], 'ordinal': row[1], 'startedAt': row[2], 'status': row[3]} for row in rows],
         'total': total, 'offset': offset, 'limit': limit, 'nextOffset': offset + limit if offset + limit < total else None}

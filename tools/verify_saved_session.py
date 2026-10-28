@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 import threading
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import urlopen
 
 
@@ -25,14 +25,18 @@ class EvidenceLinks(HTMLParser):
         self.in_message = False
         self.in_identity = False
         self.message_href = None
+        self.details = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
         href = attributes.get("href", "")
         if tag == "details":
-            self.in_message = attributes.get("class", "") in ("message user", "message agent")
-            self.message_href = None
-        if tag == "code" and self.in_message:
+            classes = attributes.get("class", "").split()
+            self.details.append(classes)
+            if "message" in classes and ("user" in classes or "agent" in classes):
+                self.in_message = True
+                self.message_href = None
+        if tag == "code" and self.in_message and any("message-source" in c for c in self.details):
             self.in_identity = True
         if tag == "br":
             self.in_identity = False
@@ -45,7 +49,8 @@ class EvidenceLinks(HTMLParser):
         if tag == "code":
             self.in_identity = False
         if tag == "details":
-            self.in_message = False
+            self.details.pop()
+            self.in_message = any("message" in c and ("user" in c or "agent" in c) for c in self.details)
 
     def handle_data(self, data):
         if self.in_identity and self.message_href:
@@ -89,6 +94,33 @@ def text(item):
     return item["text"] if item["type"] == "agentMessage" else "\n".join(c.get("text", "") for c in item["content"] if c.get("type") == "text")
 
 
+def reading_html(url, session):
+    """Read public, version-pinned turn pages; the session route is a directory."""
+    thread = quote(session['id'], safe='')
+    query = '?' + urlencode({'source': session['source']['instance'], 'saved': session['savedAt']})
+    read(url + '/session/' + thread + query)
+    entries = session['messages'] + session.get('tools', []) + session.get('unsupportedItems', [])
+    readable = {entry['turnId'] for entry in entries}
+    return '\n'.join(read(url + '/session/' + thread + '/turn/' + quote(turn['id'], safe='') + query).decode('utf-8')
+                     for turn in session['turns'] if turn['id'] in readable)
+
+
+def evidence_checks(package):
+    """An excerpt is checked as an excerpt, never as a retained raw response."""
+    evidence = package['evidence']
+    raw = [entry for entry in evidence if 'raw' in entry]
+    excerpts = [entry for entry in evidence if entry.get('representation') == 'sourceMessageExcerpt' and 'raw' not in entry]
+    return {
+        'rawEvidenceCount': len(raw), 'sourceExcerptCount': len(excerpts),
+        'allEvidenceRepresentationsRecognized': len(raw) + len(excerpts) == len(evidence),
+        'allRawHashesMatch': all(hashlib.sha256(e['raw'].encode('utf-8')).hexdigest() == e['sha256'] for e in raw) if raw else None,
+        'allRawPayloadsMatch': all(json.loads(e['raw']) == e['response'] for e in raw) if raw else None,
+        'allSourceExcerptsWellFormed': all(isinstance(e.get('response', {}).get('result', {}).get('retainedItems'), list)
+            and all(isinstance(r.get('originalEvidenceRef'), str) and r.get('item', {}).get('type') in ('userMessage', 'agentMessage')
+                    for r in e['response']['result']['retainedItems']) for e in excerpts) if excerpts else None,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--expected", type=Path, required=True)
@@ -112,7 +144,7 @@ def main():
     process, url = start(args.data_dir)
     try:
         second = read(url + "/api/session/" + tid)
-        html = read(url + "/session/" + tid).decode("utf-8")
+        html = reading_html(url, json.loads(exported)['session'])
         links = EvidenceLinks()
         links.feed(html)
         for link in set(links.links):
@@ -122,7 +154,8 @@ def main():
         message_links_match = sorted(visible_message_ids) == sorted(expected_message_ids)
         for identity, href in links.message_links:
             evidence = json.loads(read(url + href))
-            entries = evidence["response"]["result"].get("data", [])
+            result = evidence["response"]["result"]
+            entries = result.get("retainedItems", result.get("data", []))
             message_links_match &= any(e.get("item", {}).get("id") == identity for e in entries)
     finally:
         stop(process)
@@ -130,17 +163,17 @@ def main():
     session = package["session"]
     got = {(m["turnId"], m["id"]): (m["text"], m["phase"]) for m in session["messages"]}
     references = []
+    original_items = {(t['id'], i['id']): i for t in expected['turns'] for i in t['messages']}
     for message in session["messages"]:
         node = package
         for part in message["evidenceRef"][2:].split("/"):
             node = node[int(part)] if isinstance(node, list) else node[part]
-        references.append(node["id"] == message["id"] and text(node) == message["text"])
+        references.append(node == original_items.get((message['turnId'], message['id'])) and text(node) == message['text'])
     checks = {
         "publicExportMatchesIndependentManifest": wanted == got,
         "processRestartPreservesPublicQuery": first == second,
         "allEvidenceReferencesResolve": all(references) and len(references) == len(wanted),
-        "allRawHashesMatch": all(hashlib.sha256(e["raw"].encode("utf-8")).hexdigest() == e["sha256"] for e in package["evidence"]),
-        "allRawPayloadsMatch": all(json.loads(e["raw"]) == e["response"] for e in package["evidence"]),
+        **evidence_checks(package),
         "allMessageEvidenceLinksVisibleAndReadable": message_links_match,
         "htmlHasPhaseLabels": all(s in html for s in ["AI 过程消息", "AI 最终回答", "用户原文"]),
         "messages": len(got), "sourceItemCount": session["sourceItemCount"],

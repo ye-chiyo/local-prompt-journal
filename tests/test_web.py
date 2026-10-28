@@ -1,7 +1,11 @@
 import json
+import io
+from contextlib import closing
+import zipfile
 import sqlite3
 import re
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 import sys
 import tempfile
@@ -9,7 +13,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 from prompt_journal import Journal, CodexHistory
@@ -72,6 +76,55 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             urlopen(self.url + "/session/missing")
         self.assertEqual(error.exception.code, 404)
 
+    def test_project_home_uses_short_names_with_visible_paths_for_same_named_projects(self):
+        for identity, cwd in (("first-workspace", "C:/工作区/日志项目"), ("second-workspace", "D:/工作区/日志项目")):
+            capture = catalog_capture(identity)
+            capture["thread"]["cwd"] = cwd
+            self.app.save_capture(capture)
+        other_source = catalog_capture('same-path-other-source', instance='another-local-source')
+        other_source['thread']['cwd'] = 'C:/工作区/日志项目'
+        self.app.save_capture(other_source)
+
+        class ProjectLinks(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.links = []
+                self.current = None
+                self.paths = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag == "a":
+                    self.current = [dict(attrs).get("href"), ""]
+                if tag == 'details' and dict(attrs).get('class') == 'project-path':
+                    self.paths.append(dict(attrs))
+
+            def handle_data(self, data):
+                if self.current is not None:
+                    self.current[1] += data
+
+            def handle_endtag(self, tag):
+                if tag == "a" and self.current is not None:
+                    self.links.append(self.current)
+                    self.current = None
+
+        home = urlopen(self.url + "/").read().decode()
+        parsed = ProjectLinks()
+        parsed.feed(home)
+        navigation_labels = []
+        for project in self.app.project_choices():
+            if "工作区" not in project["label"]:
+                continue
+            self.assertIn(["/project/" + project["id"], "日志项目"], parsed.links)
+            labels = [text for href, text in parsed.links if href == '/project/' + project['id']]
+            navigation_labels.append(next(text for text in labels if text != '日志项目'))
+            self.assertIn(project["label"], home)
+            project_page = urlopen(self.url + "/project/" + project["id"]).read().decode()
+            self.assertIn("目录会话-", project_page)
+            self.assertNotIn("目录不应加载的正文", project_page)
+        self.assertEqual(len(set(navigation_labels)), 3)
+        self.assertTrue(parsed.paths)
+        self.assertTrue(all('open' not in attrs for attrs in parsed.paths))
+
     def test_project_page_lists_sessions_without_rendering_each_full_timeline(self):
         project_id = self.app.projects()[0]["id"]
         with urlopen(self.url + "/project/" + project_id) as response:
@@ -82,8 +135,38 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertNotIn("正在核对中文。", html)
         self.assertNotIn('数据库文件', html)
         self.assertNotIn('aria-label="搜索已保存正文"', html)
-        self.assertNotIn("来源实例：", html)
+        self.assertIn('<details data-key="directory:info"><summary>来源信息</summary>', html)
         self.assertNotIn("以下按来源会话开始时间升序排列", html)
+
+    def test_directory_announces_current_session_without_checking_it_for_batch_actions(self):
+        from html.parser import HTMLParser
+
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.sessions = []
+                self.choices = []
+                self.regions = set()
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag == "button" and "aria-pressed" in attributes:
+                    self.sessions.append(attributes)
+                if tag == "input" and attributes.get("type") == "checkbox":
+                    self.choices.append(attributes)
+                if "id" in attributes:
+                    self.regions.add(attributes["id"])
+
+        first = self.app.save_capture(catalog_capture("selection-first", 100))
+        self.app.save_capture(catalog_capture("selection-second", 200))
+        html = urlopen(self.url + "/project/" + first["project"]["id"]).read().decode()
+        controls = Controls()
+        controls.feed(html)
+        self.assertEqual([button["aria-pressed"] for button in controls.sessions], ["true", "false"])
+        self.assertTrue(all(button.get("aria-controls") in controls.regions for button in controls.sessions))
+        self.assertEqual(len(controls.choices), 2)
+        self.assertTrue(all("checked" not in choice for choice in controls.choices))
+        self.assertNotIn("目录不应加载的正文", html)
 
     def test_project_directory_and_automatic_polling_work_without_reading_snapshot_bodies(self):
         project_id = self.app.projects()[0]["id"]
@@ -105,22 +188,22 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         for i, created in enumerate((None, 100, 100, 200, 300, 400, 500)):
             saved = self.app.save_capture(catalog_capture("catalog-" + str(i), created))
         project_id = saved["project"]["id"]
-        route = "/project/" + project_id + "?offset=0&limit=2"
+        route = "/project/" + project_id + "?offset=0&limit=6"
         with urlopen(self.url + route) as response:
             html = response.read().decode()
-        self.assertIn("共 7 个回合", html)
+        self.assertIn("共 7 个会话", html)
         self.assertIn("目录会话-catalog-1", html)
         self.assertIn("目录会话-catalog-2", html)
-        for hidden in ("目录会话-catalog-0", "目录会话-catalog-3", "目录不应加载的正文", "工具最终结果"):
+        for hidden in ("目录会话-catalog-0", "目录不应加载的正文", "工具最终结果"):
             self.assertNotIn(hidden, html)
-        self.assertIn("offset=2&amp;limit=2", html)
+        self.assertIn("offset=6&amp;limit=6", html)
         href = unescape(re.search(r'href="([^"]*/session/catalog-1[^\"]*)"', html).group(1))
         with urlopen(self.url + href) as response:
             detail = response.read().decode()
         self.assertIn("目录不应加载的正文", detail)
         self.assertIn("工具最终结果", detail)
         self.assertIn('href="' + route.replace("&", "&amp;") + '">返回目录', detail)
-        with urlopen(self.url + "/project/" + project_id + "?offset=6&limit=2") as response:
+        with urlopen(self.url + "/project/" + project_id + "?offset=6&limit=6") as response:
             self.assertIn("目录会话-catalog-0", response.read().decode())
         for params in ("offset=-1", "limit=0", "limit=101", "offset=oops"):
             with self.subTest(params=params), self.assertRaises(HTTPError) as error:
@@ -146,7 +229,120 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             html = response.read().decode()
         self.assertIn('href="/status"', html)
         self.assertNotIn('数据库文件', html)
-        self.assertIn('请记录原文。', html)
+        self.assertIn('请记录原文。', unescape(re.sub(r'<[^>]*>', '', html)))
+
+    def test_search_highlights_literal_matches_and_selects_each_session_once(self):
+        query = '<b>线索</b>'
+        capture = catalog_capture('search-feedback', 100, text=query + ' 第一条')
+        answer = {'id': 'answer', 'type': 'agentMessage', 'text': '第二条 ' + query, 'phase': 'final_answer'}
+        capture['turns'][0][0]['items'][1] = answer
+        capture['items'][1][0]['item'] = answer.copy()
+        self.app.save_capture(capture)
+        route = '/search?' + urlencode({'q': query, 'limit': 30, 'offset': 0})
+        html = urlopen(self.url + route).read().decode()
+
+        class Results(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.highlights, self.choices, self.links = [], [], []
+                self.in_mark = False
+                self.bold_tags = 0
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag == 'mark':
+                    self.in_mark = True
+                if tag == 'b':
+                    self.bold_tags += 1
+                if tag == 'input' and attributes.get('name') == 'session':
+                    self.choices.append(attributes['value'])
+                if tag == 'a' and attributes.get('href', '').startswith('/session/search-feedback/'):
+                    self.links.append(attributes['href'])
+
+            def handle_endtag(self, tag):
+                if tag == 'mark':
+                    self.in_mark = False
+
+            def handle_data(self, data):
+                if self.in_mark:
+                    self.highlights.append(data)
+
+        results = Results()
+        results.feed(html)
+        self.assertEqual(results.highlights, [query, query])
+        self.assertEqual(results.bold_tags, 0)
+        self.assertEqual(len(results.choices), 1)
+        self.assertEqual(len(results.links), 2)
+        options = parse_qs(urlsplit(results.links[0]).query)
+        self.assertEqual(options['q'], [query])
+        self.assertEqual(options['return'], [route])
+        detail = urlopen(self.url + results.links[0]).read().decode()
+        self.assertIn('href="' + route.replace('&', '&amp;') + '">返回搜索结果', detail)
+
+    def test_selected_sessions_can_be_exported_and_deleted_after_review(self):
+        saved = self.app.save_capture(catalog_capture('selected-second', 100))
+        instance = saved['source']['instance']
+        first = json.dumps([instance, 'selected-second'])
+        project = saved['project']['id']
+        directory = urlopen(self.url + '/project/' + project).read().decode()
+        self.assertIn('导出所选', directory)
+        self.assertIn('删除所选', directory)
+        search = urlopen(self.url + '/search?' + urlencode({'q': '目录不应加载的正文'})).read().decode()
+        self.assertIn('导出所选', search)
+        selection = {'session': first, 'return': '/project/' + project, 'action': 'export'}
+        review = urlopen(self.url + '/selection?' + urlencode(selection)).read().decode()
+        self.assertIn('确认导出会话', review)
+        token = re.search(r'name="token" value="([^"]+)"', review).group(1)
+        data = urlencode({**selection, 'token': token}).encode()
+        with urlopen(Request(self.url + '/selection', data=data)) as response:
+            with zipfile.ZipFile(io.BytesIO(response.read())) as archive:
+                self.assertEqual(archive.namelist(), ['session-001.zip'])
+                with zipfile.ZipFile(io.BytesIO(archive.read('session-001.zip'))) as bundle:
+                    self.assertIn('session.json', bundle.namelist())
+        selection['action'] = 'delete'
+        review = urlopen(self.url + '/selection?' + urlencode(selection)).read().decode()
+        self.assertIn('不改变 Codex 原会话', review)
+        self.assertTrue(self.app.session_summary('selected-second', instance))
+        result = urlopen(Request(self.url + '/selection', data=urlencode({**selection, 'token': token}).encode())).read().decode()
+        self.assertIn('已删除', result)
+        self.assertTrue(any(entry['id'] == 'selected-second' for entry in self.app.exclusions()))
+        self.assertTrue(self.app.session('sample-session'))
+
+    def test_database_capacity_pauses_new_sessions_and_resumes_after_space_released(self):
+        self.app.save_capture(catalog_capture('existing-capacity', 100))
+        self.app.set_capacity(1024 * 1024)
+        with closing(sqlite3.connect(self.app.database)) as db, db:
+            db.execute('CREATE TABLE capacity_fixture (payload BLOB)')
+            db.execute('INSERT INTO capacity_fixture VALUES (?)', (b'x' * (2 * 1024 * 1024),))
+        self.assertTrue(self.app.capacity()['paused'])
+        from prompt_journal.app import CapacityReached
+        with self.assertRaises(CapacityReached):
+            self.app.save_capture(catalog_capture('new-capacity', 200))
+        self.app.save_capture(catalog_capture('existing-capacity', 100))
+        with closing(sqlite3.connect(self.app.database)) as db, db:
+            db.execute('DELETE FROM capacity_fixture')
+        self.assertFalse(self.app.capacity()['paused'])
+        self.app.save_capture(catalog_capture('new-capacity', 200))
+        capacity_page = urlopen(self.url + '/capacity').read().decode()
+        self.assertIn('数据库容量', capacity_page)
+        token = re.search(r'name="token" value="([^"]+)"', capacity_page).group(1)
+        form = urlencode({'token': token, 'amount': '2', 'unit': 'MiB'}).encode()
+        self.assertIn('容量设置已保存', urlopen(Request(self.url + '/capacity', data=form)).read().decode())
+        self.assertEqual(self.app.capacity()['limitBytes'], 2 * 1024 * 1024)
+        invalid = urlencode({'token': token, 'amount': '0', 'unit': 'MiB'}).encode()
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(self.url + '/capacity', data=invalid))
+        self.assertEqual(error.exception.code, 400)
+        self.assertIn('text/html', error.exception.headers['Content-Type'])
+        invalid_page = error.exception.read().decode()
+        self.assertIn('容量须在 1 MiB 至 1 TiB 之间', invalid_page)
+        self.assertIn('保存设置', invalid_page)
+        self.assertIn('value="0"', invalid_page)
+        self.assertEqual(json.load(urlopen(self.url + '/api/capacity'))['limitBytes'], 2 * 1024 * 1024)
+        cleared = urlencode({'token': token, 'amount': '', 'unit': 'MiB'}).encode()
+        cleared_page = urlopen(Request(self.url + '/capacity', data=cleared)).read().decode()
+        self.assertIn('未设上限', cleared_page)
+        self.assertIsNone(json.load(urlopen(self.url + '/api/capacity'))['limitBytes'])
 
     def test_large_message_is_loaded_on_expand_without_initial_html(self):
         large = "大文本原文-" + ("x" * 70_000)

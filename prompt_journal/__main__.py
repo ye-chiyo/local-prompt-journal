@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
+import threading
 import tempfile
 import time
 from typing import Any
@@ -66,7 +68,7 @@ def probe(source: CodexHistory, thread_id: str, expected_path: Path | None, page
     return result
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     # Explicit encoding also keeps Chinese JSON usable in Windows pipes.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -107,8 +109,32 @@ def main() -> int:
     runner.add_argument("--port", type=int, default=8766)
     runner.add_argument("--interval", type=float, default=3)
     runner.add_argument("--start-from-now", action="store_true", help="仅首次启用：从下一新回合开始，不回补旧正文")
-    args = parser.parse_args()
+    runner.add_argument("--stop-file", type=Path, help=argparse.SUPPRESS)
+    commands.add_parser("monitor", help=argparse.SUPPRESS)
+    commands.add_parser("install-autostart", help="安装当前用户的隐藏 ChatGPT 桌面联动监视器")
+    commands.add_parser("uninstall-autostart", help="移除当前用户的 ChatGPT 桌面联动监视器")
+    commands.add_parser("install-shortcuts", help="在 Windows 桌面和开始菜单创建 Codex 日志网站入口")
+    args = parser.parse_args(argv)
     try:
+        if args.command == "install-shortcuts":
+            from .desktop import install_website_shortcuts
+            print(json.dumps({"installed": True, "shortcuts": install_website_shortcuts()}, ensure_ascii=False))
+            return 0
+        if args.command == "monitor":
+            from .desktop import run_monitor
+            from .app import default_data_dir
+            run_monitor(Path(__file__).resolve().parent.parent, args.data_dir or default_data_dir())
+            return 0
+        if args.command == "install-autostart":
+            from .desktop import install_startup_task
+            task = install_startup_task(Path(__file__).resolve().parent.parent, data_dir=args.data_dir)
+            print(json.dumps({"installed": True, "task": task}, ensure_ascii=False))
+            return 0
+        if args.command == "uninstall-autostart":
+            from .desktop import uninstall_startup_task
+            removed = uninstall_startup_task(data_dir=args.data_dir)
+            print(json.dumps({"removed": removed}, ensure_ascii=False))
+            return 0
         if args.command == "probe":
             with CodexHistory() as source:
                 result = probe(source, args.thread_id, args.expected, args.page_size)
@@ -147,6 +173,10 @@ def main() -> int:
             server_instance = create_server(app, args.port, collector)
             if collector:
                 collector.start()
+                if args.stop_file:
+                    from .desktop import wait_for_stop_file
+                    threading.Thread(target=wait_for_stop_file,
+                        args=(args.stop_file, server_instance.shutdown), daemon=True).start()
             print(f"本机会话记录：http://127.0.0.1:{server_instance.server_port} · 数据：{app.data_dir}", flush=True)
             try:
                 server_instance.serve_forever()
@@ -157,7 +187,7 @@ def main() -> int:
                     collector.stop()
                 server_instance.server_close()
         return 0
-    except (HistoryError, OSError, sqlite3.Error, ValueError, KeyError) as exc:
+    except (HistoryError, OSError, sqlite3.Error, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(f"失败：{exc}", file=sys.stderr)
         return 1
 

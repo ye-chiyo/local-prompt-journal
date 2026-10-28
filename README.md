@@ -16,7 +16,7 @@ python -m prompt_journal --data-dir 外部数据目录 prune-tools --backup D:/�
 
 2026-10-26 当前交付：项目聚焦如实记录、查找和核对日志。任务 07（人工评价与纠正关联）和 08（提示改写版本与使用案例）已取消，07 未提交实现已撤回。01、02、03、05、06、09 已验收，04 并入 03；本轮按用户“完成剩下的 Issues”授权，在 `codex/remaining-log-issues` 实现 10 受管理删除、运行 11 日志全流程验证并完成首页布局反馈；用户于 2026-10-26 明确验收并要求 commit，已据此登记完成并一次提交。任务 11 已记录受控流程、已有真实证据回归、实时来源状态差异和 Windows 开销，不能据此宣称全部桌面格式或性能已认证；详见[当前任务列表](.scratch/local-prompt-journal/README.md)和[任务 11 交验记录](docs/verification/11-release-verification.md)。09 原提交 `1be3c26834332807af1cf7c368d04bd835a63dd7` 已集成 master，范围文档提交为 `c90e8d2`。本轮不改正式启用时间、不删除正式归档对话，不自动 push。
 
-任务 03、04 合并为[多项目自动归档与持续同步](.scratch/local-prompt-journal/issues/03-capture-scope.md)，见[决策记录](docs/adr/0001-automatic-project-archive.md)。首次范围已确认：从启用后的下一个新回合开始，旧会话随后新开的回合也自动采集；跨启用时刻的旧回合及更早正文不回补。已经授权保存的旧记录继续保留。Windows 登录自启动未获确认，本应用不安装启动项。
+任务 03、04 合并为[多项目自动归档与持续同步](.scratch/local-prompt-journal/issues/03-capture-scope.md)，见[决策记录](docs/adr/0001-automatic-project-archive.md)。首次范围已确认：从启用后的下一个新回合开始，旧会话随后新开的回合也自动采集；跨启用时刻的旧回合及更早正文不回补。已经授权保存的旧记录继续保留。2026-10-28 用户确认桌面联动与登录监视器，当前用户计划任务已安装；真实 Codex 重启后自动恢复采集和网站的测试通过，详见[桌面联动交验记录](docs/verification/desktop-following.md)。
 
 运行环境：Windows、Python 3.12+、桌面版 Codex。应用只使用 Python 标准库；不需要 API key、模型服务、npm 安装或远端数据库。真实验收版本及限制见 [验证记录](docs/verification/01-single-session-proof.md)。
 
@@ -51,6 +51,11 @@ python -m prompt_journal run --start-from-now --port 8766
 python -m prompt_journal run --port 8766
 # Ctrl+C 停止服务。关闭浏览器页面不会停止采集。
 
+# 可选：当前 Windows 用户登录后待机；ChatGPT 桌面主进程运行时采集 Codex Local/Worktree。
+python -m prompt_journal install-autostart
+# 移除登录任务并停止当前监视器及其采集服务。
+python -m prompt_journal uninstall-autostart
+
 # 先检查用户选择的无敏感会话；不会恢复或执行历史任务。
 python -m prompt_journal probe 会话ID
 
@@ -72,6 +77,22 @@ python -m prompt_journal export 会话ID --output C:/Users/614/AppData/Local/Loc
 
 顶部只显示简短采集状态；数据库完整路径、采集说明和详细错误统一放在独立的 `/status` 页面。采集服务运行时自动保存，关闭浏览器后仍继续；停止采集服务后暂停新记录入库。服务重启沿用同一数据库即可继续查看和采集，不需要先下载、导出或重新导入。当前本机正式服务使用的数据文件是 `C:\Users\614\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\LocalPromptJournal\data\journal.sqlite3`；8767 演示服务使用单独的测试数据库，不是正式会话记录。
 
+Windows 通过当前用户计划任务 `LocalPromptJournal ChatGPT Desktop Monitor` 登录启动隐藏监视器；安装命令立即通过任务调度器启动它，运行独立于 Codex，重装会移除旧 Startup 快捷方式。监视器使用显式的已有正式数据库物理路径，避免 MSIX 应用内外 AppData 重定向产生不同数据库。默认目录同时检查普通与当前包缓存路径；若发现多个不同数据库则要求使用 `--data-dir` 明确选择。监视器识别 ChatGPT 主进程（通过实际命令行忽略 renderer 等子进程，包括残留的孤立辅助进程）；应用已运行时立即启动采集，主进程退出后停止，采集器异常退出时自动重启。窗口关闭但桌面主进程仍在时会继续采集。它仅连接本机 Codex 历史接口，不读取普通 ChatGPT 对话；Cloud 会话不在支持范围。安装与移除分别使用 `install-autostart` 和 `uninstall-autostart`；仅影响当前 Windows 用户。详情见[桌面联动决策](docs/adr/0003-desktop-following-collector.md)。
+
+日常查看不需要通过 AI：双击 Windows 桌面上的 **Codex 日志**，或在开始菜单查找 **Codex 日志**，会用默认浏览器打开 `http://127.0.0.1:8766/`。当前桌面入口实际位于 `D:\桌面\Codex 日志.lnk`。入口只打开网站，仍沿用桌面应用主进程运行时提供采集及网页服务的规则；完全退出 Codex 后网站随服务停止，已保存记录保留。可通过 `python -m prompt_journal install-shortcuts` 安装或恢复两个入口；命令不停止采集器，重复安装不会增加重复图标，也不会覆盖同名的无关入口。2026-10-28 已完成安装、网址及 HTTP 200 核对，用户明确确认可以打开。
+
+实机重启测试使用 Windows PowerShell；默认只预检查，不关闭应用。显式 `-Run` 会创建当前用户的一次性隐藏计划任务，等待 20 秒后强制结束当前安装包路径对应的 Codex 桌面进程，再重新打开应用，检查采集服务是否自行停止与恢复。它会中断当前桌面任务，应在允许重启时运行：
+
+```powershell
+Set-Location -LiteralPath 'D:\AI\日志项目'
+# 只检查应用、监视器、来源、服务端口及数据目录，不重启。
+powershell.exe -NoProfile -File .\tools\test_desktop_restart.ps1
+# 真正执行一次重启，测试进程独立于 Codex 运行。
+powershell.exe -NoProfile -File .\tools\test_desktop_restart.ps1 -Run
+```
+
+命令返回报告目录，默认在 `%LOCALAPPDATA%\LocalPromptJournal\verification\desktop-restart-<时间>-<随机标识>`；`result.json` 和 `result.md` 随步骤更新，最终 `PASS`／`FAIL` 是实际测试结果，`RUNNING` 只表示尚在执行。测试不手动启动监视器／采集器，也不改变 `enabledAt`；恢复后要求新的采集成功时间及首页 HTTP 200。失败仍尝试重开桌面应用，报告保持失败。计划任务注册失败会在关闭应用前中止；执行完会删除临时任务。该测试不代替 Windows 登录启动、正常退出或新增对话正文入库验收。
+
 `probe` 无预期清单时只做能力探测并返回退出码 1，表示尚未验收；不会将“能够连接”误报为“样本通过”。薄真实契约检查需提供**事先独立定义**的完整样本清单：
 
 ```powershell
@@ -90,7 +111,7 @@ python -m prompt_journal probe 会话ID --page-size 1 --expected C:/Users/614/Ap
 
 每个回合拥有独立页面，只读取该回合，连续展示其用户、AI 过程及最终消息，保留原文和来源顺序。当前正式库只保留对话及消息附件，已移除工具板块；用户粘贴的文档、AI 消息及正文内的代码保持原文，保存版本与消息来源摘录仍可核对。未启用该策略的数据库继续兼容默认折叠的工具最后结果视图。
 
-首页选择项目后，进入按会话分组的分页回合目录，默认每页 30 个回合，可用 `?offset=30&limit=30` 翻页，上限 100。目录只读取回合元数据；点击“回合 1”等入口直接打开 `/session/<会话>/turn/<回合>?source=<来源>`，不再预先读取或展示整段会话，也不扫描其他会话正文构建关系。阅读页提供上一回合、返回目录、下一回合。会话仍按开始时间升序，各会话内部保持来源回合顺序。目录和阅读页不包含大块状态卡或搜索表单，搜索通过顶部独立入口访问，命中直接定位相应回合与保存版本。旧会话地址作为轻量目录兼容入口，旧命中和 `#turn-N` 锚点可跳到独立回合。
+首页选择项目后，进入按会话分页的目录，每页固定 6 个会话，最后一页显示剩余会话；`offset` 按会话计算。一个会话完整留在同一页，回合目录首批加载 30 条元数据，较长会话通过“加载更多回合”继续查看。旧项目链接中的 `limit=30` 仍按每页 6 个会话显示；独立会话目录保留原有回合分页。目录只读取元数据；点击“回合 1”等入口直接打开 `/session/<会话>/turn/<回合>?source=<来源>`，不再预先读取或展示整段会话，也不扫描其他会话正文构建关系。阅读页提供上一回合、返回目录、下一回合。会话仍按开始时间升序，各会话内部保持来源回合顺序。目录和阅读页不包含大块状态卡或搜索表单，搜索通过顶部独立入口访问，命中直接定位相应回合与保存版本。旧会话地址作为轻量目录兼容入口，旧命中和 `#turn-N` 锚点可跳到独立回合。
 
 回合正文按内容摘要去重并压缩，与保存版本关联；升级首次启动回填历史回合投影，输出数量进度，后续保存与目录同事务更新。旧完整会话 API、来源证据和导出保留，项目、回合与按需消息／工具读取各走独立查询。页面每 1.5 秒检查更新，阅读中的选择和搜索输入仍会保留。真实库性能与验证见[独立回合交验记录](docs/verification/turn-pages.md)。
 
@@ -199,3 +220,9 @@ python -m prompt_journal --data-dir 'D:\AI\日志演示-新的目录\data' serve
 工具验证自动发现、项目顺序、中文搜索、工具修订、来源中断及重启补回、共享附件删除／排除／恢复，并留下已移动原附件仍可读的归档及离线包。正式采集仍使用前文 `run`，沿用同一正式数据目录，不重新设置启用时间。
 
 当前桌面活动回合视图与独立历史接口对同一回合分别返回 `inProgress`／`interrupted`，稳定条目及证据匹配，状态一致性未通过。100ms 高频受控轮询的采集延迟中位数 159ms、P95 217ms。启用条件的父加来源进程单核等效 CPU 中位数为 62%，包含生成器、采集器、受控来源及每 5ms 调用公开 `Journal.session()` 的观察者；停用条件没有同等观察者，CPU 工作负载不对称，差量不能归因于纯采集器。不宣称低开销，正式默认仍为 3 秒。真实模型回合耗时和物理磁盘写入尚未测量，真实附件仍未认证。详见[完整记录、量值及复现说明](docs/verification/11-release-verification.md)。
+
+## 本地插件
+
+已提供“本机会话记录”本地插件：在 Codex 中按需查询项目、会话、回合和中文正文，复用已有归档数据库。安装、依赖及使用方式见 [插件说明](plugins/local-journal/README.md)，验证范围及待验收状态见 [插件交验记录](docs/verification/local-plugin.md)。
+
+项目归档首页为每个项目提供“删除项目”入口。确认页列出完整项目路径和当前全部已归档会话，确认后跨所有目录页删除这些受管理记录并设置会话删除排除；以后新建会话仍按原采集规则归档。确认范围发生变化时须重新核对。同名但来源或路径不同的项目独立处理。验证与交付状态见 [项目删除交验](docs/verification/project-deletion.md)。

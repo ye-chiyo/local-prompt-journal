@@ -1,0 +1,23 @@
+{
+  "name": "local-journal",
+  "version": "0.1.0",
+  "description": "Read and search the existing local Codex dialogue archive.",
+  "author": {
+    "name": "本机会话记录项目"
+  },
+  "interface": {
+    "displayName": "本机会话记录",
+    "shortDescription": "查找和阅读本机 Codex 对话归档",
+    "longDescription": "在 Codex 中按项目、会话和回合查找本机已保存的对话，支持中文搜索及按需原文阅读。Windows 本机插件，需要 Python 3.12+ 和已有归档数据库。查询结果进入当前对话上下文。",
+    "developerName": "本机会话记录项目",
+    "category": "Productivity",
+    "capabilities": [
+      "Read"
+    ],
+    "logo": "./assets/journal.svg",
+    "composerIcon": "./assets/journal.svg",
+    "defaultPrompt": "帮我查找本机归档中与当前项目有关的对话。"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}

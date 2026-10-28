@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,16 @@ from . import retention
 
 
 def default_data_dir() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share"))) / "LocalPromptJournal" / "data"
+    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share")))
+    ordinary = local / "LocalPromptJournal" / "data"
+    candidates = [ordinary]
+    if os.name == "nt":
+        candidates.append(local / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0" /
+                          "LocalCache" / "Local" / "LocalPromptJournal" / "data")
+    existing = {path.resolve() for path in candidates if (path / "journal.sqlite3").is_file()}
+    if len(existing) > 1:
+        raise ValueError("发现多个不同的默认数据库，请使用 --data-dir 明确指定现有数据目录。")
+    return next(iter(existing)) if existing else ordinary.resolve()
 
 
 def external_path(path: Path | str) -> Path:
@@ -32,12 +42,21 @@ def external_path(path: Path | str) -> Path:
     return destination
 
 
+class CapacityReached(HistoryError):
+    pass
+
+
 class Journal:
-    def __init__(self, data_dir: Path | str | None = None):
+    def __init__(self, data_dir: Path | str | None = None, *, read_only: bool = False):
+        self.read_only = read_only
         self.data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
         self.data_dir = external_path(self.data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.data_dir / "journal.sqlite3"
+        if read_only:
+            if not self.database.is_file():
+                raise FileNotFoundError("本机归档数据库不存在；请先使用本机会话记录应用完成初始化。")
+            return
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
             db.execute("CREATE TABLE IF NOT EXISTS snapshots (number INTEGER PRIMARY KEY, instance TEXT NOT NULL, thread TEXT NOT NULL, saved TEXT NOT NULL, package TEXT NOT NULL)")
@@ -47,7 +66,31 @@ class Journal:
         self._deletion = ManagedDeletion(self.database, self.data_dir)
 
     def _connect(self) -> sqlite3.Connection:
+        if self.read_only:
+            return sqlite3.connect(self.database.resolve().as_uri() + '?mode=ro', uri=True, timeout=10)
         return sqlite3.connect(self.database, timeout=10)
+
+    def capacity(self, db: sqlite3.Connection | None = None) -> dict[str, Any]:
+        if db is None:
+            with closing(self._connect()) as connection:
+                return self.capacity(connection)
+        page_size = db.execute('PRAGMA page_size').fetchone()[0]
+        page_count = db.execute('PRAGMA page_count').fetchone()[0]
+        free_pages = db.execute('PRAGMA freelist_count').fetchone()[0]
+        row = db.execute("SELECT value FROM collection_state WHERE key='capacity_limit_bytes'").fetchone()
+        limit = int(row[0]) if row else None
+        used = (page_count - free_pages) * page_size
+        return {'usedBytes': used, 'limitBytes': limit, 'paused': bool(limit and used >= limit)}
+
+    def set_capacity(self, limit: int | None) -> None:
+        if limit is not None and not 1024 * 1024 <= limit <= 1024 ** 4:
+            raise ValueError('容量须在 1 MiB 至 1 TiB 之间。')
+        with closing(self._connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            if limit is None:
+                db.execute("DELETE FROM collection_state WHERE key='capacity_limit_bytes'")
+            else:
+                db.execute("INSERT OR REPLACE INTO collection_state(key,value) VALUES ('capacity_limit_bytes',?)", (str(limit),))
 
     def compact(self, backup: Path | str) -> dict[str, Any]:
         return compact(self.database, external_path(backup))
@@ -57,6 +100,30 @@ class Journal:
 
     def delete_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         return self._deletion.delete(thread_id, instance)
+
+    def project_deletion_preview(self, project_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            rows = db.execute('SELECT summary FROM session_catalog WHERE project_id=? ORDER BY instance,thread', (project_id,)).fetchall()
+        if not rows:
+            raise KeyError('项目尚未保存或已删除。')
+        sessions = [json.loads(row[0]) for row in rows]
+        identities = [(s['source']['instance'], s['id']) for s in sessions]
+        fingerprint = hashlib.sha256(json.dumps(identities).encode('utf-8')).hexdigest()
+        return {'project': sessions[0]['project'], 'sessions': sessions, 'fingerprint': fingerprint}
+
+    def delete_project(self, project_id: str, fingerprint: str) -> dict[str, Any]:
+        preview = self.project_deletion_preview(project_id)
+        if preview['fingerprint'] != fingerprint:
+            raise ValueError('项目内的归档会话已变化，请重新打开项目删除确认页。')
+        outcomes = []
+        for session in preview['sessions']:
+            try:
+                result = self.delete_session(session['id'], session['source']['instance'])
+                state = result['status']
+            except (KeyError, ValueError, OSError, sqlite3.Error):
+                state = 'failed'
+            outcomes.append({'id': session['id'], 'name': session['name'], 'source': session['source']['instance'], 'status': state})
+        return {'project': preview['project'], 'sessions': outcomes}
 
     def restore_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         return self._deletion.restore(thread_id, instance)
@@ -146,6 +213,8 @@ class Journal:
                 session = package['session']
             row = db.execute("SELECT package FROM snapshots WHERE instance=? AND thread=? ORDER BY number DESC LIMIT 1",
                              (session["source"]["instance"], thread_id)).fetchone()
+            if not row and self.capacity(db)['paused']:
+                raise CapacityReached('数据库已达到设置容量，暂停保存新会话。')
             if row:
                 previous_package = decode_package(row[0])
                 previous = previous_package["session"]
@@ -280,6 +349,10 @@ class Journal:
                       thread: str | None = None, instance: str | None = None) -> dict[str, Any]:
         with closing(self._connect()) as db:
             return turn_store.directory(db, project_id, offset, limit, thread, instance)
+
+    def project_directory(self, project_id: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return turn_store.project_page(db, project_id, offset, limit)
 
     def turn(self, thread_id: str, turn_id: str, instance: str | None = None,
              saved_at: str | None = None) -> dict[str, Any]:
