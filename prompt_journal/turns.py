@@ -97,6 +97,30 @@ def directory(db: sqlite3.Connection, project: str, offset: int = 0, limit: int 
         'nextOffset': offset + limit if offset + limit < total else None}
 
 
+def project_page(db: sqlite3.Connection, project: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError('目录页起点须非负，每页会话数量须为 1—100。')
+    db.execute('BEGIN')
+    row = db.execute('SELECT summary FROM session_catalog WHERE project_id=? LIMIT 1', (project,)).fetchone()
+    if row is None:
+        raise KeyError('项目尚未保存')
+    where = 'project_id=? AND EXISTS (SELECT 1 FROM turn_entries t WHERE t.number=c.number AND t.content_count>0)'
+    total = db.execute('SELECT COUNT(*) FROM session_catalog c WHERE ' + where, (project,)).fetchone()[0]
+    if offset >= total:
+        offset = ((total - 1) // limit) * limit if total else 0
+    sessions = db.execute('SELECT number,summary FROM session_catalog c WHERE ' + where +
+                          ' ORDER BY created IS NULL,created,instance,thread LIMIT ? OFFSET ?', (project, limit, offset)).fetchall()
+    groups = []
+    for number, value in sessions:
+        session = json.loads(value)
+        count = db.execute('SELECT COUNT(*) FROM turn_entries WHERE number=? AND content_count>0', (number,)).fetchone()[0]
+        rows = db.execute('SELECT turn,ordinal,started,status FROM turn_entries WHERE number=? AND content_count>0 ORDER BY ordinal LIMIT 30', (number,))
+        entries = [{'session': session, 'id': r[0], 'ordinal': r[1], 'startedAt': r[2], 'status': r[3]} for r in rows]
+        groups.append({'session': session, 'turns': entries, 'total': count, 'nextOffset': 30 if count > 30 else None})
+    return {'project': json.loads(row[0])['project'], 'sessionGroups': groups, 'paginationUnit': 'sessions',
+            'total': total, 'offset': offset, 'limit': limit, 'nextOffset': offset + limit if offset + limit < total else None}
+
+
 def read(db: sqlite3.Connection, thread: str, turn: str, instance: str | None,
          saved: str | None) -> dict[str, Any]:
     db.execute('BEGIN')

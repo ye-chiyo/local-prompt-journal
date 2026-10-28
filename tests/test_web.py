@@ -81,16 +81,22 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             capture = catalog_capture(identity)
             capture["thread"]["cwd"] = cwd
             self.app.save_capture(capture)
+        other_source = catalog_capture('same-path-other-source', instance='another-local-source')
+        other_source['thread']['cwd'] = 'C:/工作区/日志项目'
+        self.app.save_capture(other_source)
 
         class ProjectLinks(HTMLParser):
             def __init__(self):
                 super().__init__()
                 self.links = []
                 self.current = None
+                self.paths = []
 
             def handle_starttag(self, tag, attrs):
                 if tag == "a":
                     self.current = [dict(attrs).get("href"), ""]
+                if tag == 'details' and dict(attrs).get('class') == 'project-path':
+                    self.paths.append(dict(attrs))
 
             def handle_data(self, data):
                 if self.current is not None:
@@ -104,14 +110,20 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         home = urlopen(self.url + "/").read().decode()
         parsed = ProjectLinks()
         parsed.feed(home)
+        navigation_labels = []
         for project in self.app.project_choices():
             if "工作区" not in project["label"]:
                 continue
             self.assertIn(["/project/" + project["id"], "日志项目"], parsed.links)
+            labels = [text for href, text in parsed.links if href == '/project/' + project['id']]
+            navigation_labels.append(next(text for text in labels if text != '日志项目'))
             self.assertIn(project["label"], home)
             project_page = urlopen(self.url + "/project/" + project["id"]).read().decode()
             self.assertIn("目录会话-", project_page)
             self.assertNotIn("目录不应加载的正文", project_page)
+        self.assertEqual(len(set(navigation_labels)), 3)
+        self.assertTrue(parsed.paths)
+        self.assertTrue(all('open' not in attrs for attrs in parsed.paths))
 
     def test_project_page_lists_sessions_without_rendering_each_full_timeline(self):
         project_id = self.app.projects()[0]["id"]
@@ -176,22 +188,22 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         for i, created in enumerate((None, 100, 100, 200, 300, 400, 500)):
             saved = self.app.save_capture(catalog_capture("catalog-" + str(i), created))
         project_id = saved["project"]["id"]
-        route = "/project/" + project_id + "?offset=0&limit=2"
+        route = "/project/" + project_id + "?offset=0&limit=6"
         with urlopen(self.url + route) as response:
             html = response.read().decode()
-        self.assertIn("共 7 个回合", html)
+        self.assertIn("共 7 个会话", html)
         self.assertIn("目录会话-catalog-1", html)
         self.assertIn("目录会话-catalog-2", html)
-        for hidden in ("目录会话-catalog-0", "目录会话-catalog-3", "目录不应加载的正文", "工具最终结果"):
+        for hidden in ("目录会话-catalog-0", "目录不应加载的正文", "工具最终结果"):
             self.assertNotIn(hidden, html)
-        self.assertIn("offset=2&amp;limit=2", html)
+        self.assertIn("offset=6&amp;limit=6", html)
         href = unescape(re.search(r'href="([^"]*/session/catalog-1[^\"]*)"', html).group(1))
         with urlopen(self.url + href) as response:
             detail = response.read().decode()
         self.assertIn("目录不应加载的正文", detail)
         self.assertIn("工具最终结果", detail)
         self.assertIn('href="' + route.replace("&", "&amp;") + '">返回目录', detail)
-        with urlopen(self.url + "/project/" + project_id + "?offset=6&limit=2") as response:
+        with urlopen(self.url + "/project/" + project_id + "?offset=6&limit=6") as response:
             self.assertIn("目录会话-catalog-0", response.read().decode())
         for params in ("offset=-1", "limit=0", "limit=101", "offset=oops"):
             with self.subTest(params=params), self.assertRaises(HTTPError) as error:

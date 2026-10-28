@@ -1,12 +1,11 @@
 """Check saved tools via HTTP against raw protocol facts fixed before implementation."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import sys
 from urllib.parse import quote
 
-from verify_saved_session import EvidenceLinks, read, start, stop
+from verify_saved_session import EvidenceLinks, evidence_checks, read, reading_html, start, stop
 
 
 def main():
@@ -32,7 +31,7 @@ def main():
     process, url = start(args.data_dir)
     try:
         second = read(url + "/api/session/" + tid)
-        html = read(url + "/session/" + tid).decode("utf-8")
+        html = reading_html(url, json.loads(exported)['session'])
         links = EvidenceLinks()
         links.feed(html)
         for link in set(links.links):
@@ -49,7 +48,10 @@ def main():
     matches = []
     for entry in expected["tools"]:
         item = entry["item"]
-        tool = actual.get((entry["turnId"], item["id"]), {})
+        tool = actual.get((entry["turnId"], item["id"]))
+        if tool is None:
+            matches.append(False)
+            continue
         node = package
         for part in tool.get("evidenceRef", "#/")[2:].split("/"):
             node = node[int(part)] if isinstance(node, list) else node[part]
@@ -66,8 +68,7 @@ def main():
                        and tool["completedAtMs"] == entry["completedAtMs"]
                        and f'data-tool-id="{item["id"]}"' in html)
     checks.update({"allFixedToolFactsAndEvidenceMatch": all(matches), "toolCount": len(actual),
-                   "rawHashesMatch": all(hashlib.sha256(e["raw"].encode("utf-8")).hexdigest() == e["sha256"] for e in package["evidence"]),
-                   "rawResponsesMatch": all(json.loads(e["raw"]) == e["response"] for e in package["evidence"])})
+                   "retention": view['source'].get('retention', 'full-protocol'), **evidence_checks(package)})
     checks["selfVerified"] = all(v for v in checks.values() if isinstance(v, bool))
     checks["userAccepted"] = False
     args.report.write_text(json.dumps(checks, ensure_ascii=False, indent=2), encoding="utf-8")

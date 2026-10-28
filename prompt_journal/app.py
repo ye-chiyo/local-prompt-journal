@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -99,6 +100,30 @@ class Journal:
 
     def delete_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         return self._deletion.delete(thread_id, instance)
+
+    def project_deletion_preview(self, project_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            rows = db.execute('SELECT summary FROM session_catalog WHERE project_id=? ORDER BY instance,thread', (project_id,)).fetchall()
+        if not rows:
+            raise KeyError('项目尚未保存或已删除。')
+        sessions = [json.loads(row[0]) for row in rows]
+        identities = [(s['source']['instance'], s['id']) for s in sessions]
+        fingerprint = hashlib.sha256(json.dumps(identities).encode('utf-8')).hexdigest()
+        return {'project': sessions[0]['project'], 'sessions': sessions, 'fingerprint': fingerprint}
+
+    def delete_project(self, project_id: str, fingerprint: str) -> dict[str, Any]:
+        preview = self.project_deletion_preview(project_id)
+        if preview['fingerprint'] != fingerprint:
+            raise ValueError('项目内的归档会话已变化，请重新打开项目删除确认页。')
+        outcomes = []
+        for session in preview['sessions']:
+            try:
+                result = self.delete_session(session['id'], session['source']['instance'])
+                state = result['status']
+            except (KeyError, ValueError, OSError, sqlite3.Error):
+                state = 'failed'
+            outcomes.append({'id': session['id'], 'name': session['name'], 'source': session['source']['instance'], 'status': state})
+        return {'project': preview['project'], 'sessions': outcomes}
 
     def restore_session(self, thread_id: str, instance: str | None = None) -> dict[str, Any]:
         return self._deletion.restore(thread_id, instance)
@@ -324,6 +349,10 @@ class Journal:
                       thread: str | None = None, instance: str | None = None) -> dict[str, Any]:
         with closing(self._connect()) as db:
             return turn_store.directory(db, project_id, offset, limit, thread, instance)
+
+    def project_directory(self, project_id: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+        with closing(self._connect()) as db:
+            return turn_store.project_page(db, project_id, offset, limit)
 
     def turn(self, thread_id: str, turn_id: str, instance: str | None = None,
              saved_at: str | None = None) -> dict[str, Any]:
