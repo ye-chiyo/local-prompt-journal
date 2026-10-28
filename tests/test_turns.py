@@ -33,6 +33,43 @@ def two_turns():
 
 
 class IndependentTurnAcceptance(unittest.TestCase):
+    def test_empty_turn_removed_from_directories_and_neighbors_after_upgrade_and_new_save(self):
+        capture = two_turns()
+        empty = {'id': 'empty', 'startedAt': 150, 'status': 'completed', 'items': []}
+        capture['turns'].insert(1, (empty, '#/evidence/0'))
+        with tempfile.TemporaryDirectory() as temp:
+            app = Journal(Path(temp) / 'data')
+            saved = app.save_capture(capture)
+            # An existing archive created before the message-count projection.
+            with closing(sqlite3.connect(app.database)) as db, db:
+                db.execute('ALTER TABLE turn_entries DROP COLUMN content_count')
+            app = Journal(app.data_dir)
+            server = create_server(app, port=0)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                base = f'http://127.0.0.1:{server.server_port}'
+                for directory in (app.project_turns(saved['project']['id']), app.session_turns('catalog-1')):
+                    self.assertEqual(directory['total'], 2)
+                    self.assertEqual([t['ordinal'] for t in directory['turns']], [1, 3])
+                self.assertEqual(app.turn('catalog-1', 'turn')['next'], 'turn-two')
+                self.assertEqual(app.turn('catalog-1', 'turn-two')['previous'], 'turn')
+                for path in ('/project/' + saved['project']['id'], '/session/catalog-1'):
+                    with urlopen(base + path) as response:
+                        html = response.read().decode()
+                        self.assertIn('/turn/turn-two?', html)
+                        self.assertNotIn('/turn/empty?', html)
+                for suffix in ('', '&view=reader'):
+                    with self.assertRaises(HTTPError) as error:
+                        urlopen(base + '/session/catalog-1/turn/empty?source=catalog-fixture' + suffix)
+                    self.assertEqual(error.exception.code, 404)
+                app.save_capture(capture)
+                self.assertEqual(app.session_turns('catalog-1')['total'], 2)
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
+
     def test_directory_and_both_versions_read_only_the_selected_turn(self):
         with tempfile.TemporaryDirectory() as temp:
             app = Journal(Path(temp) / 'data')

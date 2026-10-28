@@ -1,0 +1,11 @@
+# 本机会话记录插件
+
+Windows 本机 Codex 插件，Python 3.12+，无第三方依赖。提供归档状态、项目、会话、回合目录、回合原文和中文搜索六个只读 MCP 工具。
+
+安装包自带本项目读取代码，使用 SQLite `mode=ro` 打开已有数据库，不启动采集器或执行数据库升级。没有归档时返回错误。默认沿用应用的数据目录发现规则；若有多个数据库，通过 MCP 进程环境变量 `LOCAL_JOURNAL_DATA_DIR` 明确选择。Python 必须可从宿主进程 PATH 找到。
+
+网页链接指向现有 `http://127.0.0.1:8766/`，须网页服务运行才能打开。插件查询独立于网页服务。查询结果会进入当前 AI 对话上下文；插件包不含真实日志、数据库或附件。
+
+从项目根目录运行 `python tools/build_plugin.py --output 源码外的新目录` 生成自包含插件、私有 ZIP 及本机 marketplace。使用 `codex plugin marketplace add 输出目录` 注册，随后使用 `codex plugin add local-journal@local-journal-dev` 安装。打开新的 Codex 会话并选择“本机会话记录”插件。
+
+更新时重新构建并使用宿主支持的重装流程；不要手改安装缓存。仅有包构建或安装成功不能证明当前会话已经载入工具。

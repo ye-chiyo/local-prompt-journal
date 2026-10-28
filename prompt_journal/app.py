@@ -46,11 +46,16 @@ class CapacityReached(HistoryError):
 
 
 class Journal:
-    def __init__(self, data_dir: Path | str | None = None):
+    def __init__(self, data_dir: Path | str | None = None, *, read_only: bool = False):
+        self.read_only = read_only
         self.data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
         self.data_dir = external_path(self.data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
         self.database = self.data_dir / "journal.sqlite3"
+        if read_only:
+            if not self.database.is_file():
+                raise FileNotFoundError("本机归档数据库不存在；请先使用本机会话记录应用完成初始化。")
+            return
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
             db.execute("CREATE TABLE IF NOT EXISTS snapshots (number INTEGER PRIMARY KEY, instance TEXT NOT NULL, thread TEXT NOT NULL, saved TEXT NOT NULL, package TEXT NOT NULL)")
@@ -60,6 +65,8 @@ class Journal:
         self._deletion = ManagedDeletion(self.database, self.data_dir)
 
     def _connect(self) -> sqlite3.Connection:
+        if self.read_only:
+            return sqlite3.connect(self.database.resolve().as_uri() + '?mode=ro', uri=True, timeout=10)
         return sqlite3.connect(self.database, timeout=10)
 
     def capacity(self, db: sqlite3.Connection | None = None) -> dict[str, Any]:
