@@ -9,6 +9,7 @@ import io
 import zipfile
 import sqlite3
 import secrets
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urlencode
 
@@ -466,7 +467,7 @@ def directory_time(value: Any) -> str:
     return source_time(value)[:16] if isinstance(value, (int, float)) else '未知'
 
 
-def capacity_html(capacity: dict[str, Any], token: str, amount: str | None = None,
+def capacity_html(capacity: dict[str, Any], token: str, database: Path, amount: str | None = None,
                   unit: str = 'MiB', error: str = '', saved: bool = False) -> str:
     used, limit = capacity['usedBytes'], capacity['limitBytes']
     ratio = used / limit if limit else None
@@ -487,6 +488,10 @@ def capacity_html(capacity: dict[str, Any], token: str, amount: str | None = Non
             f'<p>设置上限：{limit_label}</p><p class="capacity-state">{status}</p>'
             '<details><summary>容量统计与保存规则</summary><p>统计数据库中已使用的数据页；删除后可重用的空间不计入。附件文件单独存储，不计入数据库容量。</p>'
             '<p>达到上限后暂停保存新会话，已有会话仍会更新，因此使用量可能超过上限。容量降至上限以下后自动恢复。此设置不是整个数据目录的磁盘配额。</p></details></section>'
+            '<section class="source capacity-settings"><h2>存放位置</h2>'
+            '<p class="muted">当前服务正在使用以下位置，可复制完整路径到文件资源管理器查看。</p>'
+            f'<dl><dt>数据目录</dt><dd><code>{escape(str(database.parent))}</code></dd>'
+            f'<dt>数据库文件</dt><dd><code>{escape(str(database))}</code></dd></dl></section>'
             f'<section class="source capacity-settings"><h2>设置容量上限</h2><p class="muted" id="capacity-help">支持 1 MiB 至 1 TiB；留空表示不限制。</p>'
             f'<form method="post" action="/capacity"><input type="hidden" name="token" value="{token}"><label>容量<input name="amount" type="number" min="0" step="any" aria-describedby="capacity-help" value="{escape(amount, quote=True)}"></label>'
             f'<label>单位<select name="unit">{options}</select></label><button type="submit">保存设置</button></form></section>')
@@ -1023,7 +1028,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 self.end_headers()
             except (ValueError, UnicodeError) as exc:
                 if urlsplit(self.path).path == '/capacity':
-                    body = capacity_html(app.capacity(), token, values.get('amount', [''])[0], values.get('unit', ['MiB'])[0], error=str(exc))
+                    body = capacity_html(app.capacity(), token, app.database, values.get('amount', [''])[0], values.get('unit', ['MiB'])[0], error=str(exc))
                     self.respond(400, 'text/html', page('数据库容量', body, active='capacity', projects=app.project_choices()))
                 else:
                     self.respond(400, 'text/plain', str(exc))
@@ -1044,7 +1049,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 if url.path == '/api/capacity':
                     self.respond(200, 'application/json', json.dumps(app.capacity()))
                 elif url.path == '/capacity':
-                    body = capacity_html(app.capacity(), token, saved=bool(options.get('saved')))
+                    body = capacity_html(app.capacity(), token, app.database, saved=bool(options.get('saved')))
                     self.respond(200, 'text/html', page('数据库容量', body, active='capacity', projects=app.project_choices()))
                 elif len(segments) == 3 and segments[:2] == ['manage', 'delete-project']:
                     preview = app.project_deletion_preview(segments[2])
