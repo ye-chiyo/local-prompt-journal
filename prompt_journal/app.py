@@ -22,7 +22,16 @@ from . import retention
 
 
 def default_data_dir() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share"))) / "LocalPromptJournal" / "data"
+    local = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "share")))
+    ordinary = local / "LocalPromptJournal" / "data"
+    candidates = [ordinary]
+    if os.name == "nt":
+        candidates.append(local / "Packages" / "OpenAI.Codex_2p2nqsd0c76g0" /
+                          "LocalCache" / "Local" / "LocalPromptJournal" / "data")
+    existing = {path.resolve() for path in candidates if (path / "journal.sqlite3").is_file()}
+    if len(existing) > 1:
+        raise ValueError("发现多个不同的默认数据库，请使用 --data-dir 明确指定现有数据目录。")
+    return next(iter(existing)) if existing else ordinary.resolve()
 
 
 def external_path(path: Path | str) -> Path:

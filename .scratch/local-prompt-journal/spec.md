@@ -127,7 +127,7 @@ Status: ready-for-agent
 
 ### 待确认事项
 
-- Windows 登录后是否自动启动采集器：目前仅为建议，未获确认，不写成已实现或必需的开机配置。
+- Windows 登录后运行隐藏桌面监视器、并在 ChatGPT 桌面主进程运行期间启停 Codex 采集器，已于 2026-10-28 获确认；实施与验收见[桌面联动规格](../desktop-following/spec.md)及[任务](../desktop-following/issues/01-desktop-following.md)，在完成代码、安装和验证前不视为已实现。
 - 首次采集范围已在任务 03 验收时确认，见上述采集契约及任务记录，不重新询问或以 --start-from-now 再次改变现有范围。
 
 ## Testing Decisions
