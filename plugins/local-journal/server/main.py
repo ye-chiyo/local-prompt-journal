@@ -122,7 +122,7 @@ def handle(request: Any) -> dict[str, Any] | None:
     if method == 'initialize':
         offered = params.get('protocolVersion')
         response['result'] = {'protocolVersion': offered if offered in ('2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25') else '2025-11-25',
-                              'capabilities': {'tools': {}}, 'serverInfo': {'name': 'local-journal', 'version': '0.1.0'}}
+                              'capabilities': {'tools': {}}, 'serverInfo': {'name': 'local-journal', 'version': '0.1.1'}}
     elif method == 'ping':
         response['result'] = {}
     elif method == 'tools/list':

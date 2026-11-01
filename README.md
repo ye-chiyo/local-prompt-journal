@@ -223,6 +223,6 @@ python -m prompt_journal --data-dir 'D:\AI\日志演示-新的目录\data' serve
 
 ## 本地插件
 
-已提供“本机会话记录”本地插件：在 Codex 中按需查询项目、会话、回合和中文正文，复用已有归档数据库。安装、依赖及使用方式见 [插件说明](plugins/local-journal/README.md)，验证范围及待验收状态见 [插件交验记录](docs/verification/local-plugin.md)。
+已提供“本机会话记录”本地插件：在 Codex 中按需查询项目、会话、回合和中文正文，复用已有归档数据库；插件详情页同时提供本机日志网站入口。网站入口只打开既有网页，不控制采集服务。安装、依赖及使用方式见 [插件说明](plugins/local-journal/README.md)，验证范围及待验收状态见 [插件交验记录](docs/verification/local-plugin.md)。
 
 项目归档首页为每个项目提供“删除项目”入口。确认页列出完整项目路径和当前全部已归档会话，确认后跨所有目录页删除这些受管理记录并设置会话删除排除；以后新建会话仍按原采集规则归档。确认范围发生变化时须重新核对。同名但来源或路径不同的项目独立处理。验证与交付状态见 [项目删除交验](docs/verification/project-deletion.md)。

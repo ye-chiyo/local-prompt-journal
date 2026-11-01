@@ -14,6 +14,23 @@ from tools.build_plugin import build
 
 
 class LocalPluginAcceptance(unittest.TestCase):
+    def test_packaged_manifest_exposes_website_entry_without_service_control(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = build(root / 'package')
+            self.assertEqual(archive.name, 'local-journal.zip')
+
+            plugin_root = root / 'package' / 'plugins' / 'local-journal'
+            portable = json.loads((plugin_root / 'plugin.json').read_text(encoding='utf-8'))
+            codex = json.loads((plugin_root / '.codex-plugin' / 'plugin.json').read_text(encoding='utf-8'))
+            website = 'http://127.0.0.1:8766/'
+
+            self.assertEqual(portable['version'], '0.1.1')
+            self.assertEqual(codex['version'], '0.1.1')
+            self.assertEqual(portable['extensions']['com.openai']['interface']['websiteURL'], website)
+            self.assertEqual(codex['interface']['websiteURL'], website)
+            self.assertEqual(portable['extensions']['com.openai']['interface']['capabilities'], ['Read'])
+
     def test_packaged_stdio_search_read_pagination_and_exclusion(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -37,7 +54,9 @@ class LocalPluginAcceptance(unittest.TestCase):
                 self.assertFalse(result['isError'], result)
                 return json.loads(result['content'][0]['text'])
             try:
-                self.assertEqual(request('initialize', {'protocolVersion': '2025-11-25'})['serverInfo']['name'], 'local-journal')
+                server_info = request('initialize', {'protocolVersion': '2025-11-25'})['serverInfo']
+                self.assertEqual(server_info['name'], 'local-journal')
+                self.assertEqual(server_info['version'], '0.1.1')
                 self.assertEqual(len(request('tools/list')['tools']), 6)
                 self.assertEqual(call('archive_status')['liveCollectorState'], 'unknown')
                 projects = call('list_projects')['projects']

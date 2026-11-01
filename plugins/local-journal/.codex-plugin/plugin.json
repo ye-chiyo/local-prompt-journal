@@ -1,6 +1,6 @@
 {
   "name": "local-journal",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read and search the existing local Codex dialogue archive.",
   "author": {
     "name": "本机会话记录项目"
@@ -14,6 +14,7 @@
     "capabilities": [
       "Read"
     ],
+    "websiteURL": "http://127.0.0.1:8766/",
     "logo": "./assets/journal.svg",
     "composerIcon": "./assets/journal.svg",
     "defaultPrompt": "帮我查找本机归档中与当前项目有关的对话。"

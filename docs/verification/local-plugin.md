@@ -15,3 +15,15 @@
 协议实现参考：https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
 
 2026-10-28 用户明确要求一次 commit，本记录随本轮实现统一提交。此前“未提交”的描述是该阶段的状态；正式服务更新及尚未完成的宿主体验仍按上文单独记录。
+
+## 2026-11-01 网站入口最小验证
+
+- 插件版本更新为 `0.1.1`，根清单和 Codex 兼容清单均在 `interface.websiteURL` 声明 `http://127.0.0.1:8766/`。
+- 最终源码外构建包位于 `C:/Users/614/AppData/Local/Packages/OpenAI.Codex_2p2nqsd0c76g0/LocalCache/Local/LocalPromptJournal/plugins/local-journal-0.1.1-r2-20261101-215057/local-journal.zip`，SHA-256 为 `79E1C23BBE471BFE7EC5566C59ECDBB2CB197A8C2D502C4B5DB8DB5A07207769`。此前构建的 MCP `initialize.serverInfo.version` 仍为 `0.1.0`，已先补失败断言，再同步为 `0.1.1` 后重新构建。
+- 本机 `local-journal-dev` marketplace 已切换到 `0.1.1`，`codex plugin add` 安装到 `C:/Users/614/.codex/plugins/cache/local-journal-dev/local-journal/0.1.1`。
+- 从重装后的安装缓存发起 MCP 初始化，返回 `serverInfo.version = "0.1.1"`，六个只读工具列表正常；`codex plugin list --marketplace local-journal-dev --json` 显示插件已安装且启用。
+- 插件详情页实测版本为 `0.1.1`，“网站”从“不可用”变为可点击链接，地址为 `http://127.0.0.1:8766/`。
+- 用户确认真实链接可以正常跳转。宿主进程记录为 `msedge.exe --single-argument http://127.0.0.1:8766/`，其父进程是 ChatGPT 桌面进程；系统 `http` 与 `https` 的默认处理程序均为 `MSEdgeHTM`。因此一次点击已进入默认浏览器，不再需要升级为全局 MCP App。
+- “默认浏览器”由本机 Codex `[desktop]` 偏好 `open-local-url-in-target-preference = "external-browser"` 保证。插件清单不能设置宿主偏好；新配置、重装或重置偏好后仍可能回到应用内浏览器，这是当前最小方案的环境前提。
+- 网站入口没有调用采集启动、停止、重启或代理接口。8766 仍由原有 Python 进程提供，查询时 `/api/status` 为 `running=true`，采集启用时间保持 `1792940638.27711`，网站 HTTP 返回 200。
+- 打包后的 MCP 查询测试使用独立临时数据库，不依赖网页服务；插件说明只声明打开既有网页，不声称入口会启动服务。网站服务不可用时查询仍可用，入口也不会改变服务状态。
