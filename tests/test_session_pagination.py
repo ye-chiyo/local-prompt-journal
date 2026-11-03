@@ -33,7 +33,7 @@ def long_session():
 
 
 class SessionPaginationAcceptance(unittest.TestCase):
-    def test_pages_hold_six_sessions_and_long_session_loads_more_without_bodies(self):
+    def test_pages_hold_ten_sessions_and_long_session_loads_more_without_bodies(self):
         with tempfile.TemporaryDirectory() as temp:
             app = Journal(Path(temp) / 'data')
             first = app.save_capture(long_session())
@@ -55,17 +55,17 @@ class SessionPaginationAcceptance(unittest.TestCase):
                     return response.read().decode()
             try:
                 with patch('sqlite3.connect', side_effect=metadata_only):
-                    pages = [app.project_directory(first['project']['id'], offset=o) for o in (0, 6, 12, 18)]
-                    self.assertEqual([len(p['sessionGroups']) for p in pages], [6, 6, 6, 5])
+                    pages = [app.project_directory(first['project']['id'], offset=o) for o in (0, 10, 20)]
+                    self.assertEqual([len(p['sessionGroups']) for p in pages], [10, 10, 3])
                     identities = [g['session']['id'] for p in pages for g in p['sessionGroups']]
                     self.assertEqual(identities, [f'session-{i:02}' for i in range(23)])
                     self.assertEqual(pages[0]['sessionGroups'][0]['total'], 65)
                     self.assertEqual(len(pages[0]['sessionGroups'][0]['turns']), 30)
                     page = read('/project/' + first['project']['id'])
-                    self.assertIn('每页 6 个会话 · 共 23 个会话', page)
-                    self.assertIn('1 / 4', page)
+                    self.assertIn('每页 10 个会话 · 共 23 个会话', page)
+                    self.assertIn('1 / 3', page)
                     self.assertNotIn('会话零的独立正文', page)
-                    self.assertNotIn('目录会话-session-06', page)
+                    self.assertNotIn('目录会话-session-10', page)
                     href = html_module.unescape(re.search(r'data-turn-more="([^"]+)"', page)[1])
                     more = read(href)
                     self.assertIn('回合 31', more)
@@ -73,10 +73,10 @@ class SessionPaginationAcceptance(unittest.TestCase):
                     last = read(html_module.unescape(re.search(r'data-turn-more="([^"]+)"', more)[1]))
                     self.assertIn('回合 65', last)
                     self.assertNotIn('data-turn-more', last)
-                    self.assertIn('4 / 4', read('/project/' + first['project']['id'] + '?offset=18&limit=6'))
+                    self.assertIn('3 / 3', read('/project/' + first['project']['id'] + '?offset=20&limit=10'))
                     legacy = read('/project/' + first['project']['id'] + '?offset=0&limit=30')
-                    self.assertIn('每页 6 个会话', legacy)
-                    self.assertNotIn('目录会话-session-06', legacy)
+                    self.assertIn('每页 10 个会话', legacy)
+                    self.assertNotIn('目录会话-session-10', legacy)
                 reader = read('/session/session-00/turn/turn-65?source=catalog-fixture')
                 self.assertIn('会话零的独立正文', reader)
             finally:

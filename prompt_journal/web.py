@@ -1157,10 +1157,10 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     self.respond(200, 'application/json', json.dumps(result, ensure_ascii=False))
                 elif len(segments) == 2 and segments[0] == "project":
                     # Existing URLs used limit=30 for turns. Keep accepting those
-                    # links while giving every project page six complete sessions.
-                    if not 1 <= int(options.get('limit', ['6'])[0]) <= 100:
+                    # links while giving every project page ten complete sessions.
+                    if not 1 <= int(options.get('limit', ['10'])[0]) <= 100:
                         raise ValueError('每页数量须为 1—100。')
-                    result = app.project_directory(segments[1], int(options.get('offset', ['0'])[0]), 6)
+                    result = app.project_directory(segments[1], int(options.get('offset', ['0'])[0]), 10)
                     project = result['project']
                     self.respond(200, 'text/html', page(project['label'], turn_directory(result, url.path, options), projects=app.project_choices(), project_id=project['id']))
                 elif url.path == "/api/sessions":

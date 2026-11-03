@@ -97,7 +97,7 @@ def directory(db: sqlite3.Connection, project: str, offset: int = 0, limit: int 
         'nextOffset': offset + limit if offset + limit < total else None}
 
 
-def project_page(db: sqlite3.Connection, project: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+def project_page(db: sqlite3.Connection, project: str, offset: int = 0, limit: int = 10) -> dict[str, Any]:
     if offset < 0 or not 1 <= limit <= 100:
         raise ValueError('目录页起点须非负，每页会话数量须为 1—100。')
     db.execute('BEGIN')

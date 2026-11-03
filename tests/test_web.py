@@ -185,26 +185,28 @@ class LocalInterfaceAcceptance(unittest.TestCase):
                     self.assertEqual(response.status, 200)
 
     def test_project_directory_pages_in_start_order_and_returns_from_detail_to_same_page(self):
-        for i, created in enumerate((None, 100, 100, 200, 300, 400, 500)):
+        for i, created in enumerate((None, 100, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100)):
             saved = self.app.save_capture(catalog_capture("catalog-" + str(i), created))
         project_id = saved["project"]["id"]
-        route = "/project/" + project_id + "?offset=0&limit=6"
+        route = "/project/" + project_id + "?offset=0&limit=10"
         with urlopen(self.url + route) as response:
             html = response.read().decode()
-        self.assertIn("共 7 个会话", html)
+        self.assertIn("共 13 个会话", html)
         self.assertIn("目录会话-catalog-1", html)
         self.assertIn("目录会话-catalog-2", html)
-        for hidden in ("目录会话-catalog-0", "目录不应加载的正文", "工具最终结果"):
+        for hidden in ("目录会话-catalog-0", "目录会话-catalog-11", "目录不应加载的正文", "工具最终结果"):
             self.assertNotIn(hidden, html)
-        self.assertIn("offset=6&amp;limit=6", html)
+        self.assertIn("offset=10&amp;limit=10", html)
         href = unescape(re.search(r'href="([^"]*/session/catalog-1[^\"]*)"', html).group(1))
         with urlopen(self.url + href) as response:
             detail = response.read().decode()
         self.assertIn("目录不应加载的正文", detail)
         self.assertIn("工具最终结果", detail)
         self.assertIn('href="' + route.replace("&", "&amp;") + '">返回目录', detail)
-        with urlopen(self.url + "/project/" + project_id + "?offset=6&limit=6") as response:
-            self.assertIn("目录会话-catalog-0", response.read().decode())
+        with urlopen(self.url + "/project/" + project_id + "?offset=10&limit=10") as response:
+            second_page = response.read().decode()
+        self.assertIn("目录会话-catalog-11", second_page)
+        self.assertIn("目录会话-catalog-0", second_page)
         for params in ("offset=-1", "limit=0", "limit=101", "offset=oops"):
             with self.subTest(params=params), self.assertRaises(HTTPError) as error:
                 urlopen(self.url + "/project/" + project_id + "?" + params)

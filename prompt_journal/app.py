@@ -350,7 +350,7 @@ class Journal:
         with closing(self._connect()) as db:
             return turn_store.directory(db, project_id, offset, limit, thread, instance)
 
-    def project_directory(self, project_id: str, offset: int = 0, limit: int = 6) -> dict[str, Any]:
+    def project_directory(self, project_id: str, offset: int = 0, limit: int = 10) -> dict[str, Any]:
         with closing(self._connect()) as db:
             return turn_store.project_page(db, project_id, offset, limit)
 
