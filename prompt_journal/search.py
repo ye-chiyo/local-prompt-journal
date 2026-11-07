@@ -82,6 +82,7 @@ def search_sessions(sessions: list[dict[str, Any]], query: str, project: str | N
                     matches.append({"sourceInstance": source, "project": session["project"], "threadId": session["id"],
                         "sessionName": session["name"], "savedAt": session["savedAt"], "turnId": item["turnId"],
                         "id": item["id"], "type": item["type"], "phase": item.get("phase"), "kind": kind, "field": field,
+                        "startedAtMs": item.get("startedAtMs"),
                         "snippet": ("…" if start else "") + text[start:end] + ("…" if end < len(text) else ""),
                         "completeness": item["completeness"], "reasons": item["reasons"], "evidenceRef": item["evidenceRef"],
                         "url": route + "?" + urlencode(options) + "#" + anchor, "evidenceUrl": evidence_url})

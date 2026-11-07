@@ -17,7 +17,8 @@ from .app import Journal
 from .sync import Collector
 from .search import item_anchor, searchable_fields
 from .attachments import content_type
-from .presentation import STYLE, icon
+from .presentation import icon
+from .theme import STYLE
 
 
 LAZY_TEXT_LIMIT = 64 * 1024
@@ -52,47 +53,154 @@ def project_contexts(projects: list[dict[str, Any]]) -> dict[str, str]:
 def project_archive(projects: list[dict[str, Any]]) -> str:
     contexts = project_contexts(projects)
     rows = ''
-    for project in projects:
+    for index, project in enumerate(projects):
         identity = quote(project['id'], safe='')
         label = escape(project['label'])
         context = f'<p class="project-context">{escape(contexts[project["id"]])}</p>' if contexts[project['id']] else ''
-        rows += (f'<li class="archive-row"><div><h2><a href="/project/{identity}">{escape(project_name(project["label"]))}</a></h2>'
-                 f'{context}<details class="project-path" data-key="project:{identity}:path"><summary>项目路径</summary><code>{label}</code></details></div>'
+        search_text = ' '.join((project_name(project['label']), project['label'], contexts[project['id']])).casefold()
+        rows += (f'<li class="archive-row" style="--i:{min(index, 8)}" data-project-row data-search-text="{escape(search_text, quote=True)}"><div><h2><a href="/project/{identity}" title="{escape(project["label"], quote=True)}">{escape(project_name(project["label"]))}</a></h2>'
+                 f'{context}<span class="sr-only">完整路径：{label}</span></div>'
                  f'<span class="project-amount">{project["sessionCount"]} 个会话</span>'
-                 f'<a class="project-delete-link" href="/manage/delete-project/{identity}" aria-label="删除项目归档：{escape(project["label"], quote=True)}">删除项目</a></li>')
-    heading = f'<div class="page-title"><h1>项目归档</h1><span>{len(projects)} 个项目</span></div>'
-    return heading + (f'<ul class="archive-list">{rows}</ul>' if rows else
-        '<div class="empty"><h2>尚无范围内已保存的会话</h2><p>采集服务启动后会自动发现所有项目的新回合，无需手动导入或同步。来源运行情况见采集状态。</p></div>')
+                 f'<a class="project-delete-link" href="/manage/delete-project/{identity}" aria-label="删除项目归档：{escape(project["label"], quote=True)}">删除</a></li>')
+    heading = ('<header class="page-heading"><div><h1>项目归档</h1></div>'
+               '<label class="archive-filter"><span class="sr-only">筛选项目</span>'
+               '<input type="search" data-project-filter autocomplete="off" placeholder="筛选项目…"></label></header>')
+    body = f'<ul class="archive-list">{rows}</ul>' if rows else (
+        '<div class="empty"><h2>暂无已保存项目</h2></div>')
+    return heading + body + '<p class="archive-status sr-only" data-project-filter-status role="status"></p>'
 
 
 def page(title: str, body: str, reading: bool = False, active: str = 'projects',
          projects: list[dict[str, Any]] | None = None, project_id: str | None = None) -> str:
     main_class = ' class="reader"' if reading else ''
-    current_project = ' aria-current="true"' if active == 'projects' else ''
-    search_current = ' aria-current="true"' if active == 'search' else ''
-    status_current = ' aria-current="true"' if active == 'status' else ''
-    manage_current = ' aria-current="true"' if active == 'manage' else ''
+    current_project = ' aria-current="page"' if active == 'projects' else ''
+    search_current = ' aria-current="page"' if active == 'search' else ''
+    status_current = ' aria-current="page"' if active == 'status' else ''
+    manage_current = ' aria-current="page"' if active == 'manage' else ''
     project_links = ''
     contexts = project_contexts(projects or [])
-    for project in projects or []:
+    for index, project in enumerate(projects or []):
         selected = ' aria-current="page"' if project['id'] == project_id else ''
         label = project['label']
         short_name = project_name(label)
         context = f'<small>{escape(contexts[project["id"]])}</small>' if contexts[project['id']] else ''
-        project_links += f'<a href="/project/{quote(project["id"], safe="")}" title="{escape(label, quote=True)}"{selected}>{icon("folder")}<span><span>{escape(short_name)}</span>{context}</span></a>'
+        project_links += f'<a style="--i:{min(index, 8)}" href="/project/{quote(project["id"], safe="")}" title="{escape(label, quote=True)}"{selected}>{icon("folder")}<span><span>{escape(short_name)}</span>{context}</span></a>'
     header = (f'<header class="app-header"><a class="brand" href="/">{icon("brand")}<strong>本机会话记录</strong></a>'
               f'<nav class="primary-nav" aria-label="主要导航"><a href="/"{current_project}>{icon("folder")}项目</a>'
               f'<a href="/search"{search_current}>{icon("search")}搜索</a><a href="/status"{status_current}>{icon("check")}采集状态</a>'
               f'<a href="/manage/exclusions"{manage_current}>{icon("trash")}删除管理</a></nav>'
-              f'<div class="project-nav"><p>项目列表</p>{project_links}</div>'
-              '<a class="capacity-card" href="/capacity"><strong>数据库容量</strong><span id="capacity-label">正在读取</span><span class="capacity-track" role="progressbar" aria-label="数据库容量" aria-valuemin="0" aria-valuemax="100"><span id="capacity-progress"></span></span></a>'
-              '<span id="collection-indicator" class="collection-indicator" aria-live="polite">正在检查</span></header>')
-    search = f'<form class="header-search" action="/search" method="get" aria-label="全局正文搜索">{icon("search")}<input type="search" name="q" aria-label="全局搜索正文" placeholder="搜索已保存正文"></form>'
-    return f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style><script src="/live.js" defer></script></head><body><a class="skip-link" href="#main">跳到正文</a>{header}<div class="app-content">{search}<main id="main" tabindex="-1"{main_class}>{body}</main></div></body></html>'
+              '<form class="global-search" action="/search" method="get" role="search">'
+              f'{icon("search")}<input id="global-search" type="search" name="q" aria-label="全局搜索正文" '
+              'aria-keyshortcuts="Control+K /" placeholder="搜索已保存正文…" autocomplete="off">'
+              '</form>'
+              '<div class="top-status"><span id="collection-indicator" class="collection-indicator" '
+              'aria-live="polite">检查中</span>'
+              '<button class="shortcut-help" type="button" data-shortcut-help aria-label="查看键盘快捷键" '
+              'aria-haspopup="dialog" aria-controls="shortcut-dialog" title="键盘快捷键">'
+              f'{icon("keyboard")}</button></div></header>'
+              '<aside class="project-sidebar">'
+              f'<span class="sr-only" data-project-count>{len(projects or [])} 个项目</span>'
+              f'<nav class="project-nav" aria-label="项目索引">{project_links}</nav>'
+              '<div class="rail-footer"><a class="capacity-card" href="/capacity" title="数据库容量" aria-label="数据库容量">'
+              '<span id="capacity-label">正在读取</span>'
+              '<span class="capacity-track" role="progressbar" aria-label="数据库容量" aria-valuemin="0" aria-valuemax="100">'
+              '<span id="capacity-progress"></span></span></a></div></aside>')
+    dialog = ('<dialog class="shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-title">'
+              '<div class="shortcut-dialog-inner"><h2 id="shortcut-title">键盘快捷键</h2>'
+              '<dl><dt><kbd>Ctrl</kbd> + <kbd>K</kbd></dt><dd>聚焦全局正文搜索</dd>'
+              '<dt><kbd>/</kbd></dt><dd>在非输入状态聚焦搜索</dd>'
+              '<dt><kbd>[</kbd> / <kbd>]</kbd></dt><dd>上一回合 / 下一回合</dd>'
+              '<dt><kbd>Esc</kbd></dt><dd>关闭快捷键说明或离开搜索框</dd></dl>'
+              '<button type="button" data-shortcut-close class="outline-action">关闭</button></div></dialog>')
+    return (f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<meta name="theme-color" content="#e9ede6">'
+            f'<title>{escape(title)} · 本机会话记录</title><style>{STYLE}</style>'
+            '<script src="/live.js" defer></script></head><body>'
+            '<a class="skip-link" href="#main">跳到正文</a>'
+            f'{header}<div class="app-content"><main id="main" tabindex="-1"{main_class}>{body}</main></div>'
+            f'{dialog}</body></html>')
 
 
 LIVE_SCRIPT = """
 let version = null;
+function isTypingTarget(target) {
+  return target instanceof HTMLElement && (
+    target.matches('input, textarea, select, [contenteditable="true"]') || Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+  );
+}
+function focusGlobalSearch() {
+  const input = document.getElementById('global-search');
+  if (!input) return;
+  input.focus();
+  input.select();
+}
+function moveTurn(direction) {
+  const links = [...document.querySelectorAll('[data-atlas-turn]')].filter(link => {
+    const group = link.closest('[data-turn-group]');
+    return !group || !group.hidden;
+  });
+  if (links.length) {
+    const current = links.findIndex(link => link.matches('.selected, [aria-current="true"]'));
+    const next = current < 0 ? 0 : Math.max(0, Math.min(links.length - 1, current + direction));
+    if (current === next && current >= 0) return;
+    links[next].click();
+    return;
+  }
+  const fallback = document.querySelector(direction < 0 ? '[data-turn-prev]' : '[data-turn-next]');
+  if (fallback instanceof HTMLAnchorElement) location.assign(fallback.href);
+}
+function filterProjects(input) {
+  const rows = [...document.querySelectorAll('[data-project-row]')];
+  const query = input.value.trim().toLocaleLowerCase('zh-CN');
+  let visible = 0;
+  for (const row of rows) {
+    const match = !query || (row.dataset.searchText || '').includes(query);
+    row.hidden = !match;
+    if (match) visible++;
+  }
+  const status = document.querySelector('[data-project-filter-status]');
+  if (status) status.textContent = query ? `显示 ${visible} / ${rows.length} 个项目` : '';
+}
+document.addEventListener('input', event => {
+  if (event.target.matches('[data-project-filter]')) filterProjects(event.target);
+});
+const shortcutDialog = document.getElementById('shortcut-dialog');
+document.querySelector('[data-shortcut-help]')?.addEventListener('click', () => {
+  if (shortcutDialog instanceof HTMLDialogElement) shortcutDialog.showModal();
+});
+document.addEventListener('click', event => {
+  if (event.target.closest('[data-shortcut-close]') && shortcutDialog instanceof HTMLDialogElement) shortcutDialog.close();
+});
+shortcutDialog?.addEventListener('click', event => {
+  if (event.target === shortcutDialog) shortcutDialog.close();
+});
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'k') {
+    event.preventDefault();
+    focusGlobalSearch();
+    return;
+  }
+  if (event.key === 'Escape') {
+    if (shortcutDialog instanceof HTMLDialogElement && shortcutDialog.open) {
+      shortcutDialog.close();
+      return;
+    }
+    if (isTypingTarget(event.target)) event.target.blur();
+    return;
+  }
+  if (isTypingTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.key === '/') {
+    event.preventDefault();
+    focusGlobalSearch();
+  } else if (event.key === '[' || event.key === ']') {
+    event.preventDefault();
+    moveTurn(event.key === '[' ? -1 : 1);
+  } else if (event.key === '?') {
+    event.preventDefault();
+    if (shortcutDialog instanceof HTMLDialogElement) shortcutDialog.showModal();
+  }
+});
 async function loadLazyContent(node) {
   if (!node?.dataset.lazyUrl || node.dataset.lazyLoaded === 'true') return;
   node.dataset.lazyLoaded = 'loading';
@@ -166,9 +274,7 @@ async function loadSessionOptions(form, more = false) {
   try {
     const params = new URLSearchParams({limit:'100', offset:more ? select.dataset.next || '0' : '0'});
     const project = form.elements.project.value;
-    const query = form.querySelector('[data-session-filter]').value;
     if (project) params.set('project', project);
-    if (query) params.set('q', query);
     const response = await fetch('/api/catalog?' + params, {signal:request.signal});
     if (!response.ok) throw new Error();
     const result = await response.json();
@@ -202,12 +308,6 @@ document.addEventListener('change', event => {
   select.dataset.loaded = 'false';
   event.target.form.querySelector('[data-session-more]').hidden = true;
   loadSessionOptions(event.target.form);
-});
-document.addEventListener('input', event => {
-  if (event.target.matches('[data-session-filter]')) {
-    clearTimeout(event.target.sessionTimer);
-    event.target.sessionTimer = setTimeout(() => loadSessionOptions(event.target.form), 200);
-  }
 });
 document.addEventListener('submit', event => {
   if (event.target.id !== 'session-selection') return;
@@ -244,6 +344,20 @@ document.addEventListener('change', event => {
 let atlasRequest = 0;
 let atlasController = null;
 let readerAnimation = null;
+let detailAnimation = null;
+let lastTurnOrdinal = null;
+const motionEase = 'cubic-bezier(0.22, 1, 0.36, 1)';
+function motionReduced() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function animatePanel(element, options = {}) {
+  if (!element || motionReduced() || !element.animate) return null;
+  const {x = 0, y = 0, scale = 1, duration = 280} = options;
+  return element.animate([
+    {opacity: 0, transform: `translate(${x}px, ${y}px) scale(${scale})`},
+    {opacity: 1, transform: 'translate(0, 0) scale(1)'}
+  ], {duration, easing: motionEase});
+}
 async function loadAtlasTurn(link) {
   const request = ++atlasRequest;
   atlasController?.abort();
@@ -253,7 +367,11 @@ async function loadAtlasTurn(link) {
   const timeout = setTimeout(() => controller.abort(), 20000);
   const content = document.querySelector('[data-reader-content]');
   const status = document.querySelector('[data-reader-status]');
+  const placeholder = document.querySelector('[data-reader-placeholder]');
   const open = document.querySelector('[data-reader-open]');
+  const ordinal = Number(link.dataset.turnOrdinal);
+  const direction = lastTurnOrdinal === null ? 1 : ordinal < lastTurnOrdinal ? -1 : 1;
+  lastTurnOrdinal = ordinal;
   for (const item of document.querySelectorAll('[data-atlas-turn]')) {
     item.classList.toggle('selected', item === link);
     if (item === link) item.setAttribute('aria-current', 'true');
@@ -262,6 +380,7 @@ async function loadAtlasTurn(link) {
   document.querySelector('[data-reader-title]').textContent = '回合 ' + link.dataset.turnOrdinal;
   content.replaceChildren();
   content.setAttribute('aria-busy', 'true');
+  if (placeholder) placeholder.hidden = true;
   status.textContent = '正在加载回合正文…';
   open.href = link.href;
   open.hidden = false;
@@ -276,10 +395,14 @@ async function loadAtlasTurn(link) {
     if (request !== atlasRequest) return;
     const versionNote = doc.querySelector('[data-reader-version]');
     content.replaceChildren(...[versionNote, turn].filter(Boolean));
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches && content.animate) {
-      readerAnimation = content.animate([{opacity: .4}, {opacity: 1}], {duration: 180, easing: 'ease-out'});
+    readerAnimation?.cancel();
+    if (!motionReduced() && content.animate) {
+      readerAnimation = content.animate([
+        {opacity: .2, transform: `translateX(${direction * 10}px)`},
+        {opacity: 1, transform: 'translateX(0)'}
+      ], {duration: 260, easing: motionEase});
     }
-    status.textContent = '';
+    status.textContent = '回合 ' + link.dataset.turnOrdinal + ' 已加载。';
     content.closest('.atlas-reader').scrollTop = 0;
     for (const node of content.querySelectorAll('[data-lazy-url]')) {
       let visible = true;
@@ -295,7 +418,10 @@ async function loadAtlasTurn(link) {
     retry.type = 'button';
     retry.dataset.readerRetry = '';
     retry.textContent = '重试加载';
-    content.replaceChildren(retry);
+    const note = document.createElement('p');
+    note.className = 'gap';
+    note.textContent = '正文加载失败，请重试或打开独立页面。';
+    content.replaceChildren(note, retry);
   } finally {
     clearTimeout(timeout);
     if (request === atlasRequest) content.setAttribute('aria-busy', 'false');
@@ -332,6 +458,7 @@ document.addEventListener('click', event => {
     atlasRequest++;
     atlasController?.abort();
     readerAnimation?.cancel();
+    lastTurnOrdinal = null;
     const id = sessionButton.dataset.selectGroup;
     for (const row of document.querySelectorAll('.atlas-session-row')) row.classList.toggle('selected', row.dataset.group === id);
     for (const button of document.querySelectorAll('[data-select-group]')) button.setAttribute('aria-pressed', String(button === sessionButton));
@@ -343,14 +470,15 @@ document.addEventListener('click', event => {
     const group = document.querySelector('[data-turn-group="' + id + '"]');
     document.querySelector('[data-atlas-name]').textContent = group.dataset.name;
     document.querySelector('[data-atlas-meta]').textContent = group.dataset.meta;
-    document.querySelector('[data-atlas-source]').textContent = group.dataset.source;
-    document.querySelector('[data-atlas-created]').textContent = group.dataset.created;
-    document.querySelector('[data-atlas-saved]').textContent = group.dataset.saved;
+    detailAnimation?.cancel();
+    detailAnimation = animatePanel(document.querySelector('.atlas-detail'), {x: 8, duration: 280});
     document.querySelector('[data-reader-title]').textContent = '回合正文';
     const content = document.querySelector('[data-reader-content]');
+    const placeholder = document.querySelector('[data-reader-placeholder]');
     content.replaceChildren();
     content.setAttribute('aria-busy', 'false');
     document.querySelector('[data-reader-status]').textContent = '选择一个回合，正文将在这里显示。';
+    if (placeholder) placeholder.hidden = false;
     document.querySelector('[data-reader-open]').hidden = true;
     return;
   }
@@ -368,7 +496,7 @@ document.addEventListener('click', event => {
   if (event.target.matches('[data-session-more]')) loadSessionOptions(event.target.form, true);
 });
 function canRefreshPage() {
-  return !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('[data-turn-group][data-expanded]') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open], .project-path[open], details[data-key="directory:info"][open]');
+  return !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('[data-turn-group][data-expanded]') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open]');
 }
 async function update() {
   try {
@@ -395,7 +523,7 @@ async function update() {
     }
     const indicator = document.getElementById('collection-indicator');
     if (indicator) {
-      indicator.textContent = status.error ? '采集异常' : status.running ? '自动采集中' : '采集未运行';
+      indicator.textContent = status.error ? '采集异常' : status.running ? '采集中' : '未运行';
       indicator.classList.toggle('error', Boolean(status.error));
       indicator.dataset.state = status.error ? 'error' : status.running ? 'running' : 'stopped';
     }
@@ -414,19 +542,28 @@ async function update() {
         const focused = document.activeElement?.closest('details[data-key]')?.dataset.key;
         const focusedHref = document.activeElement?.closest('a')?.getAttribute('href');
         const formValues = [...document.querySelectorAll('.search-form [name]')].map(el => [el.name, el.value, el.selectedOptions?.[0]?.textContent]);
-        const sessionFilter = document.querySelector('[data-session-filter]')?.value || '';
+        const projectFilter = document.querySelector('[data-project-filter]')?.value || '';
+        const advancedOpen = document.querySelector('.search-advanced')?.open;
         for (const form of document.querySelectorAll('.search-form')) form.sessionRequest?.abort();
         document.querySelector('main').replaceWith(next.querySelector('main'));
         updateSelection();
         document.getElementById('page-context')?.remove();
         document.querySelector('.project-nav')?.replaceWith(next.querySelector('.project-nav'));
+        const nextProjectCount = next.querySelector('[data-project-count]');
+        const projectCount = document.querySelector('[data-project-count]');
+        if (nextProjectCount && projectCount) projectCount.textContent = nextProjectCount.textContent;
         for (const [name, value, label] of formValues) {
           const el = [...document.querySelectorAll('.search-form [name]')].find(el => el.name === name);
           if (el?.matches('[data-session-options]') && value && ![...el.options].some(option => option.value === value)) el.add(new Option(label, value));
           if (el) el.value = value;
         }
-        const filter = document.querySelector('[data-session-filter]');
-        if (filter) filter.value = sessionFilter;
+        const nextProjectFilter = document.querySelector('[data-project-filter]');
+        if (nextProjectFilter) {
+          nextProjectFilter.value = projectFilter;
+          filterProjects(nextProjectFilter);
+        }
+        const nextAdvanced = document.querySelector('.search-advanced');
+        if (nextAdvanced && advancedOpen !== undefined) nextAdvanced.open = advancedOpen;
         locateHit();
         if (focused) {
           const detail = [...document.querySelectorAll('details[data-key]')].find(d => d.dataset.key === focused);
@@ -472,9 +609,8 @@ def capacity_html(capacity: dict[str, Any], token: str, database: Path, amount: 
     used, limit = capacity['usedBytes'], capacity['limitBytes']
     ratio = used / limit if limit else None
     state = 'full' if ratio is not None and ratio >= 1 else 'warning' if ratio is not None and ratio > .8 else 'normal'
-    status = ('已达到上限，新会话暂停保存。' if capacity['paused'] else
-              '使用量已超过 80%，接近容量上限。' if state == 'warning' else
-              '当前可以保存新会话。' if limit else '未设上限，按现有采集范围保存。')
+    status = ('已满，暂停保存新会话。' if capacity['paused'] else
+              '接近上限。' if state == 'warning' else '')
     limit_label = f'{limit / 1048576:g} MiB' if limit else '未设上限'
     notice = f'<p class="capacity-feedback" role="alert">{escape(error)}</p>' if error else '<p class="capacity-feedback" role="status">容量设置已保存。</p>' if saved else ''
     if amount is None:
@@ -483,38 +619,89 @@ def capacity_html(capacity: dict[str, Any], token: str, database: Path, amount: 
     options = ''.join(f'<option value="{value}"{" selected" if value == unit else ""}>{value}</option>' for value in ('MiB', 'GiB'))
     percent = f'{ratio * 100:.1f}%' if ratio is not None else '未设上限'
     progress = (f'<progress class="capacity-meter" max="100" value="{min(100, ratio * 100):.1f}" aria-label="数据库容量使用率">{percent}</progress>' if ratio is not None else '')
-    return (f'<h1>数据库容量</h1>{notice}<section class="source capacity-settings" data-capacity-state="{state}">'
-            f'<h2>使用情况</h2><div class="capacity-summary"><strong>{used / 1048576:.1f}<small> MiB 已使用</small></strong><span>{percent}</span></div>{progress}'
-            f'<p>设置上限：{limit_label}</p><p class="capacity-state">{status}</p>'
-            '<details><summary>容量统计与保存规则</summary><p>统计数据库中已使用的数据页；删除后可重用的空间不计入。附件文件单独存储，不计入数据库容量。</p>'
-            '<p>达到上限后暂停保存新会话，已有会话仍会更新，因此使用量可能超过上限。容量降至上限以下后自动恢复。此设置不是整个数据目录的磁盘配额。</p></details></section>'
-            '<section class="source capacity-settings"><h2>存放位置</h2>'
-            '<p class="muted">当前服务正在使用以下位置，可复制完整路径到文件资源管理器查看。</p>'
+    summary = (f'<div class="capacity-summary"><strong>{used / 1048576:.1f} MiB</strong>'
+               f'<span>{("/ " + limit_label + " · " + percent) if limit else " · 未设上限"}</span></div>')
+    status_html = f'<p class="capacity-state">{status}</p>' if status else ''
+    return (f'<h1>数据库容量</h1>{notice}<section class="capacity-settings" data-capacity-state="{state}">'
+            f'{summary}{progress}{status_html}'
+            '<details class="capacity-rules"><summary>规则</summary><p>统计数据库数据页；附件不计入。达到上限后暂停新会话，已有会话仍会更新。</p></details>'
+            '<h2>存放位置</h2>'
             f'<dl><dt>数据目录</dt><dd><code>{escape(str(database.parent))}</code></dd>'
-            f'<dt>数据库文件</dt><dd><code>{escape(str(database))}</code></dd></dl></section>'
-            f'<section class="source capacity-settings"><h2>设置容量上限</h2><p class="muted" id="capacity-help">支持 1 MiB 至 1 TiB；留空表示不限制。</p>'
+            f'<dt>数据库文件</dt><dd><code>{escape(str(database))}</code></dd></dl>'
+            '<h2>设置上限</h2><span class="sr-only" id="capacity-help">支持 1 MiB 至 1 TiB；留空表示不限制。</span>'
             f'<form method="post" action="/capacity"><input type="hidden" name="token" value="{token}"><label>容量<input name="amount" type="number" min="0" step="any" aria-describedby="capacity-help" value="{escape(amount, quote=True)}"></label>'
             f'<label>单位<select name="unit">{options}</select></label><button type="submit">保存设置</button></form></section>')
 
 
-def collection_html(status: dict[str, Any], database: str) -> str:
-    running = "采集运行中" if status.get("running") else "此页面服务未运行采集器；其他进程的采集状态请在其页面核对"
+def collection_html(status: dict[str, Any], database: str,
+                    saved_sessions: list[dict[str, Any]] | None = None) -> str:
+    running = "采集中" if status.get("running") else "未运行"
     availability = "来源不可用" if status.get("sourceAvailable") is False else "来源可访问" if status.get("sourceAvailable") else "等待来源检查"
     if status.get("sourceAvailable") and status.get("discoveredCount") == 0:
-        availability += " · 确实没有会话"
+        availability += " · 没有会话"
     paused = sum(s.get('status') == 'capacityPaused' for s in status.get('sessions', []))
-    rows = [f'<li>会话 {escape(s["id"])}：{escape(s["error"])}</li>' for s in status.get("sessions", []) if s.get("error") and s.get('status') != 'capacityPaused']
+    failures = [s for s in status.get("sessions", []) if s.get("error") and s.get('status') != 'capacityPaused']
     saved = sum(s.get("status") == "saved" for s in status.get("sessions", []))
-    error = escape(status.get("error") or "无来源级错误")
-    return ('<section class="source collection-summary" aria-label="本机数据库与采集状态"><h2>自动归档</h2>'
-            f'<p class="collection-state"><strong>{running} · {availability}</strong></p>'
-            f'<dl><dt>最近检查</dt><dd>{saved_time(status.get("lastCheckedAt"))}</dd><dt>最近成功归档</dt><dd>{saved_time(status.get("lastSuccessAt"))}</dd>'
-            f'<dt>最近来源检查</dt><dd>{saved_time(status.get("lastSourceSuccessAt"))}</dd><dt>本轮结果</dt><dd>发现 {status.get("discoveredCount", 0)} 个会话 · 范围内保存 {saved} 个 · 失败 {len(rows)} 个 · 容量暂停 {paused} 个</dd></dl>'
-            f'<p>当前来源错误：{error}</p><ul>{"".join(rows)}</ul>'
-            '<details><summary>本机存储与采集范围</summary>'
-            f'<dl><dt>数据库文件</dt><dd>{escape(database)}</dd></dl>'
-            '<p>自动保存到本机数据库，无需手动下载。采集始终遵守原启用时间和范围；发现会话不代表该会话会被保存，也不会因此回补全部历史。</p>'
-            '<p><a href="/capacity">查看数据库容量与保存限制</a></p></details></section>')
+    outside_scope = sum(s.get("status") == "outsideScope" for s in status.get("sessions", []))
+    missing = sum(s.get("status") == "missing" for s in status.get("sessions", []))
+    read_errors = sum(s.get("status") == "error" for s in status.get("sessions", []))
+    discovered = status.get("discoveredCount", 0)
+    unclassified = max(0, discovered - saved - outside_scope - read_errors - paused)
+    excluded = len(status.get("exclusions", []))
+    source_error = status.get("error")
+    summaries = {}
+    for session in saved_sessions or []:
+        summaries[(session.get('source', {}).get('instance'), session.get('id'))] = session
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in failures:
+        grouped.setdefault((item.get('status', 'error'), item.get('error') or '原因未知'), []).append(item)
+    state_copy = {'missing': '本轮未返回', 'error': '读取失败', 'outsideScope': '范围外'}
+    groups = ''
+    for (state, reason), items in grouped.items():
+        label = state_copy.get(state, '采集未完成')
+        entries = ''
+        for item in items:
+            identity = item.get('id', '')
+            source = item.get('source', '')
+            summary = summaries.get((source, identity), {})
+            name = summary.get('name') or identity
+            project = (summary.get('project') or {}).get('label') or '项目未知'
+            href = '/session/' + quote(identity, safe='') + '?' + urlencode({'source': source})
+            entries += (f'<li><a href="{escape(href, quote=True)}">{escape(name)}</a>'
+                        f'<span>{escape(project_name(project))}</span><code>{escape(identity)}</code></li>')
+        reason_html = f'<p class="gap">{escape(reason)}</p>' if state == 'error' else ''
+        groups += (f'<details class="diagnostic-group"><summary>{len(items)} 个会话 · {escape(label)}</summary>'
+                   f'{reason_html}'
+                   f'<ul class="diagnostic-list">{entries}</ul></details>')
+    overall_state = ('error' if source_error or status.get('sourceAvailable') is False else
+                     'warning' if paused else 'stopped' if not status.get('running') else '')
+    technical = ''.join(
+        f'<li><code>{escape(item.get("id", ""))}</code> · {escape(item.get("source", "") or "来源未知")} '
+        f'· {escape(item.get("status", "unknown"))} · {escape(item.get("error") or "无错误信息")}</li>'
+        for item in status.get('sessions', []) if item.get('error'))
+    return ('<header class="page-heading"><div><h1>采集状态</h1></div></header>'
+            '<section class="status-overview">'
+            f'<div class="status-state {overall_state}" aria-label="自动归档概览">'
+            f'<p class="collection-state"><strong>{running}</strong><span>{availability}</span></p>'
+            + (f'<p class="gap">{escape(source_error)}</p>' if source_error else '')
+            + '</div>'
+            '<dl class="status-facts">'
+            f'<dt>最近检查</dt><dd>{saved_time(status.get("lastCheckedAt"))}</dd>'
+            f'<dt>最近成功归档</dt><dd>{saved_time(status.get("lastSuccessAt"))}</dd>'
+            f'<dt>最近来源检查</dt><dd>{saved_time(status.get("lastSourceSuccessAt"))}</dd>'
+            f'<dt>发现会话</dt><dd>{discovered} 个</dd>'
+            f'<dt>范围内保存</dt><dd>{saved} 个</dd>'
+            f'<dt>范围外</dt><dd>{outside_scope} 个</dd>'
+            f'<dt>读取失败</dt><dd>{read_errors} 个</dd>'
+            f'<dt>容量暂停</dt><dd>{paused} 个</dd>'
+            f'<dt>未分类</dt><dd>{unclassified} 个</dd>'
+            f'<dt>已保存但本轮未返回</dt><dd>{missing} 个</dd>'
+            f'<dt>删除排除</dt><dd>{excluded} 个</dd></dl></section>'
+            + (f'<section class="diagnostic-card" aria-label="采集诊断"><h2>未完成</h2>{groups}</section>' if groups else '')
+            + '<details class="technical-details"><summary>详情</summary>'
+            f'<dl><dt>数据库文件</dt><dd><code>{escape(database)}</code></dd></dl>'
+            + (f'<ul>{technical}</ul>' if technical else '')
+            + '</details>')
 
 
 def display_value(value: Any) -> str:
@@ -660,14 +847,21 @@ def session_body(session: dict[str, Any], return_to: str | None = None, turn_num
     links = "".join(f'<a href="#turn-{i}">回合 {i + 1}</a>' for i, _ in enumerate(session["turns"]))
     back = return_to or ('/project/' + session['project']['id'] if session.get('project') else '/')
     back_label = '返回搜索结果' if urlsplit(back).path == '/search' else '返回会话目录'
-    body = f'<div class="heading"><div><a href="{escape(back, quote=True)}">← {back_label}</a> · <a href="/">项目列表</a><h1>{escape(session["name"] or session["id"])}</h1><p>来源会话开始：{source_time(session.get("createdAt", session["thread"].get("createdAt")))}</p><p class="count">{len(session["turns"])} 个回合 · {len(session["messages"])} 条用户与 AI 消息 · {len(session.get("tools", []))} 次工具记录 · 自动归档 · 关联执行证据</p><p class="count">本会话已入库 · 最近保存：{saved_time(session["savedAt"])}。历史证据与修订保留在本机数据库；首次范围前的回合未回补。</p></div></div>'
+    body = (f'<div class="heading"><div><a href="{escape(back, quote=True)}">← {back_label}</a>'
+            f'<h1>{escape(session["name"] or session["id"])}</h1>'
+            f'<p class="count">{len(session["turns"])} 回合 · 最近保存 {saved_time(session["savedAt"])}</p></div></div>')
     if turn_number is not None:
-        body = f'<h1>{escape(session["name"] or session["id"])}</h1><p class="count">回合 {turn_number} · {source_time(session["turns"][0].get("startedAt"))}</p><div>'
-    if source.get('retention'):
-        body += '<p class="count">仅保留对话与消息附件 · 工具记录已移除</p>'
+        project = session.get('project') or {}
+        project_label = project.get('label') or session['thread'].get('cwd') or '项目未知'
+        project_link = (f'<a href="/project/{quote(project["id"], safe="")}">{escape(project_name(project_label))}</a>'
+                        if project.get('id') else escape(project_name(project_label)))
+        body = ('<div class="heading"><div>'
+                f'<a href="{escape(back, quote=True)}">← {back_label}</a>'
+                f'<h1>{escape(session["name"] or session["id"])}</h1>'
+                f'<p class="count">{project_link} · 回合 {turn_number} · {source_time(session["turns"][0].get("startedAt"))}</p>'
+                '</div></div><div>')
     if turn_number is None:
-        body += f'<p class="count">所属项目：{escape(session.get("project", {}).get("label") or session["thread"].get("cwd") or "项目未知")}</p>'
-        body += f'<div class="layout"><aside class="sidebar"><span class="eyebrow">回合索引</span><nav aria-label="回合索引">{links}</nav><p class="muted">按来源顺序阅读各回合。</p></aside><div>'
+        body += f'<div class="layout"><aside class="sidebar"><nav aria-label="回合索引">{links}</nav></aside><div>'
         body += relations_html(session)
     summary = session.get('attachmentSummary')
     if summary and turn_number is None:
@@ -675,7 +869,7 @@ def session_body(session: dict[str, Any], return_to: str | None = None, turn_num
     gaps = "".join(f'<li>{escape(gap)}</li>' for gap in source["gaps"])
     if turn_number is None:
         body += f'<details class="source" data-key="{thread}:source"><summary>数据源版本与已知缺口</summary><p>{escape(str(source["version"]))} · {escape(session["savedAt"])}</p><ul>{gaps}</ul></details>'
-    labels = {"commentary": "AI 过程消息", "final_answer": "AI 最终回答"}
+    labels = {"commentary": "AI · 过程", "final_answer": "AI · 回答"}
     statuses = {"completed": "已完成", "interrupted": "已中断", "inProgress": "进行中", "failed": "失败"}
     for index, turn in enumerate(session["turns"]):
         index = turn_number - 1 if turn_number is not None else index
@@ -700,7 +894,7 @@ def session_body(session: dict[str, Any], return_to: str | None = None, turn_num
                 execution_count += 1
                 continue
             user = message["type"] == "userMessage"
-            label = "用户原文" if user else labels.get(message["phase"], "AI 消息 · 阶段未知")
+            label = "你" if user else labels.get(message["phase"], "AI · 阶段未知")
             evidence_index = message["evidenceRef"].split("/")[2]
             completeness = {"complete": "已取得文本", "partial": "部分内容", "unknown": "完整性未知"}[message["completeness"]]
             anchor = item_anchor(source["instance"], session["id"], turn["id"], message["id"], "message")
@@ -709,12 +903,11 @@ def session_body(session: dict[str, Any], return_to: str | None = None, turn_num
             message_text = value_pre(message["text"], lazy_url, 'text')
             message_time = source_time(message["startedAtMs"] / 1000 if message["startedAtMs"] is not None else None)
             warning = f'<span class="phase">{completeness}</span>' if message["completeness"] != 'complete' else ''
-            role_icon = f'<span class="message-role-icon">{icon("user" if user else "brand")}</span>'
-            body += f'<details id="{anchor}"{open_attribute} data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="message-heading"><span class="label">{role_icon}{label}</span><span class="message-time">{escape(message_time)}</span></span>{warning}</summary>{message_text}'
+            body += f'<details id="{anchor}"{open_attribute} data-key="{thread}:{escape(turn["id"], quote=True)}:message:{escape(message["id"], quote=True)}" class="message {"user" if user else "agent"}"><summary><span class="message-heading"><span class="label">{label}</span><span class="message-time">{escape(message_time)}</span></span>{warning}</summary>{message_text}'
             for reason in message["reasons"]:
                 body += f'<p class="gap">{escape(reason)}</p>'
             body += attachments_html(session, message)
-            body += f'<footer><details class="message-source" data-key="{thread}:{escape(turn["id"], quote=True)}:source:{escape(message["id"], quote=True)}"><summary>来源信息</summary><p>{completeness} · 来源时间：{escape(message_time)}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看消息来源证据 ↗</a><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}<br>保存版本：{escape(session["savedAt"])}</code></details></footer></details>'
+            body += f'<details class="message-source" data-key="{thread}:{escape(turn["id"], quote=True)}:source:{escape(message["id"], quote=True)}"><summary>证据</summary><p>{completeness} · {escape(message_time)}</p><a href="/evidence/{thread}/{evidence_index}{evidence_query}" target="_blank" rel="noopener">查看消息来源证据 ↗</a><code>{escape(message["id"])}<br>导出位置：{escape(message["evidenceRef"])}<br>保存版本：{escape(session["savedAt"])}</code></details></details>'
         if execution_count:
             gaps = ''.join(f'<p class="gap">{escape(gap)}</p>' for gap in session.get("executionGaps", []))
             body += f'<details class="source execution" data-key="{thread}:{escape(turn["id"], quote=True)}:execution"><summary>工具调用与最终结果 · {execution_count} 条记录</summary><p class="muted">每次工具调用展示最后保存的状态与完整结果；进行中的调用如实标明。历史保存观察可从原始证据与导出核对。</p>{execution_body}</details>'
@@ -750,15 +943,17 @@ def selection_checkbox(instance: str, thread: str, label: str) -> str:
 
 def turn_links(entries: list[dict[str, Any]], back: str, pinned: bool) -> str:
     states = {'completed': '已完成', 'inProgress': '进行中', 'interrupted': '已中断', 'failed': '失败'}
-    body = '<ul class="turn-links">'
-    for entry in entries:
+    body = '<ol class="turn-links turn-ruler" aria-label="回合索引">'
+    for index, entry in enumerate(entries):
         href = turn_url(entry['session'], entry['id'], back, saved=pinned)
         state = entry['status'] if entry['status'] in states else 'unknown'
         status_label = states.get(entry['status'], '状态未知')
-        status = (f'<span class="turn-complete" role="img" aria-label="已完成" title="已完成">{icon("check")}</span>'
-                  if state == 'completed' else f'<span class="status" data-state="{state}">{status_label}</span>')
-        body += f'<li><a data-atlas-turn data-turn-ordinal="{entry["ordinal"]}" href="{escape(href, quote=True)}"><strong>回合 {entry["ordinal"]}</strong>{status}</a></li>'
-    return body + '</ul>'
+        state_text = '' if state == 'completed' else f'<span class="turn-state-label">{status_label}</span>'
+        body += (f'<li style="--i:{min(index, 8)}"><a class="turn-tab" data-atlas-turn data-turn-ordinal="{entry["ordinal"]}" '
+                 f'data-state="{state}" aria-label="回合 {entry["ordinal"]}，{status_label}" '
+                 f'title="回合 {entry["ordinal"]} · {status_label}" href="{escape(href, quote=True)}">'
+                 f'<span aria-hidden="true">{entry["ordinal"]:02d}</span>{state_text}</a></li>')
+    return body + '</ol>'
 
 
 def more_turns_button(session: dict[str, Any], offset: int | None, back: str) -> str:
@@ -783,15 +978,23 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
     if session_paging:
         groups = [(group['session'], group['turns']) for group in result['sessionGroups']]
     totals = [group['total'] for group in result['sessionGroups']] if session_paging else [len(entries) for _, entries in groups]
-    count_text = (f'每页 {result["limit"]} 个会话 · 共 {result["total"]} 个会话' if session_paging
-                  else f'本页 {len(groups)} 个会话 · 共 {result["total"]} 个回合')
-    body = '<div class="directory-layout atlas-layout"><section class="atlas-sessions"><header class="atlas-list-heading"><h1>会话目录</h1><span>' + count_text + '</span></header>'
+    project = result['project']
+    project_label = escape(project['label'])
+    page_turn_count = sum(totals)
+    body = ('<div class="directory-layout atlas-layout"><header class="project-directory-head"><div>'
+            '<a class="directory-back" href="/">← 项目归档</a>'
+            f'<h1 title="{escape(project_name(project["label"]), quote=True)}">{escape(project_name(project["label"]))}</h1>'
+            f'<p title="{escape(project["label"], quote=True)}">{project_label}</p></div>'
+            '<div class="project-facts">'
+            f'<span>{result["total"]} 个会话</span>'
+            f'<span>{page_turn_count} 回合</span></div></header>'
+            '<section class="atlas-sessions"><h2 class="sr-only">会话目录</h2>')
     body += '<div class="atlas-session-list">'
     for index, (session, entries) in enumerate(groups):
         label = session['name'] or session['id']
         choice = selection_checkbox(session['source']['instance'], session['id'], label)
-        turn_count = f'共 {totals[index]} 个回合' if session_paging else f'本页 {len(entries)} 个回合'
-        body += f'<div class="atlas-session-row{(" selected" if index == 0 else "")}" data-group="{index}">{choice}<button class="atlas-session-button" type="button" title="{escape(label, quote=True)}" aria-pressed="{str(index == 0).lower()}" aria-controls="session-turns-{index}" data-select-group="{index}"><span class="atlas-session-copy"><strong>{escape(label)}</strong><small title="{source_time(session.get("createdAt"))}">{directory_time(session.get("createdAt"))} · {turn_count}</small></span></button></div>'
+        turn_count = f'{totals[index]} 回合' if session_paging else f'{len(entries)} 回合'
+        body += f'<div class="atlas-session-row{(" selected" if index == 0 else "")}" style="--i:{min(index, 8)}" data-group="{index}">{choice}<button class="atlas-session-button" type="button" title="{escape(label, quote=True)}" aria-pressed="{str(index == 0).lower()}" aria-controls="session-turns-{index}" data-select-group="{index}"><span class="atlas-session-copy"><strong>{escape(label)}</strong><small title="{source_time(session.get("createdAt"))}">{directory_time(session.get("createdAt"))} · {turn_count}</small></span></button></div>'
     if not groups:
         body += f'<p class="empty">这一页没有可阅读的会话。<a href="{escape(path, quote=True)}">返回第一页</a></p>'
     body += '</div><nav class="turn-navigation pagination" aria-label="' + ('会话目录分页' if session_paging else '回合目录分页') + '">'
@@ -807,19 +1010,28 @@ def turn_directory(result: dict[str, Any], path: str, options: dict[str, list[st
             body += f'<a href="{escape(href, quote=True)}">{label}</a>'
     body += '</nav></section><section class="atlas-detail"><header class="atlas-detail-heading"><div><h2 data-atlas-name>'
     body += escape((groups[0][0]['name'] or groups[0][0]['id']) if groups else '暂无会话')
-    first_count = f'共 {totals[0]} 个回合' if session_paging and groups else (f'本页 {len(groups[0][1])} 个回合' if groups else '')
+    first_count = f'{totals[0]} 回合' if session_paging and groups else (f'{len(groups[0][1])} 回合' if groups else '')
     first_session = groups[0][0] if groups else {}
-    body += '</h2><div class="session-context"><p data-atlas-meta>' + (f'{directory_time(first_session.get("createdAt"))} · {first_count}' if groups else '') + '</p><details data-key="directory:info"><summary>来源信息</summary><dl><dt>来源实例</dt><dd data-atlas-source>' + escape(first_session.get('source', {}).get('instance', '未知')) + '</dd><dt>会话开始</dt><dd data-atlas-created>' + source_time(first_session.get('createdAt')) + '</dd><dt>保存版本</dt><dd data-atlas-saved>' + saved_time(first_session.get('savedAt')) + '</dd></dl></details></div>' + selection_toolbar(back) + '</div></header><div class="atlas-detail-columns"><section class="atlas-turns"><h2>回合目录</h2>'
+    body += ('</h2><div class="session-context"><p data-atlas-meta>'
+             + (f'{directory_time(first_session.get("createdAt"))} · {first_count}' if groups else '')
+             + '</p></div>' + selection_toolbar(back) + '</div></header>'
+             '<div class="atlas-turn-rail">')
     for index, (session, entries) in enumerate(groups):
         label = escape(session['name'] or session['id'], quote=True)
-        count = f'共 {totals[index]} 个回合' if session_paging else f'本页 {len(entries)} 个回合'
+        count = f'{totals[index]} 回合' if session_paging else f'{len(entries)} 回合'
         meta = escape(f'{directory_time(session.get("createdAt"))} · {count}', quote=True)
-        body += f'<div class="atlas-turn-group" id="session-turns-{index}" data-turn-group="{index}" data-name="{label}" data-meta="{meta}" data-source="{escape(session["source"]["instance"], quote=True)}" data-created="{source_time(session.get("createdAt"))}" data-saved="{saved_time(session.get("savedAt"))}"{(" hidden" if index else "")}>'
+        body += f'<div class="atlas-turn-group" id="session-turns-{index}" data-turn-group="{index}" data-name="{label}" data-meta="{meta}"{(" hidden" if index else "")}>'
         body += turn_links(entries, back, session_paging or bool(options.get('saved')))
         if session_paging:
             body += more_turns_button(session, result['sessionGroups'][index]['nextOffset'], back)
         body += '</div>'
-    body += '</section><section class="atlas-reader" aria-label="回合正文"><div class="atlas-reader-header"><h2 data-reader-title>回合正文</h2><a data-reader-open hidden>打开独立页面 ↗</a></div><p data-reader-status role="status" class="atlas-placeholder">选择一个回合，正文将在这里显示。</p><div data-reader-content aria-busy="false"></div></section></div></section></div>'
+    body += ('</div><section class="atlas-reader" aria-label="回合正文">'
+             '<div class="atlas-reader-header"><h2 data-reader-title>回合正文</h2>'
+             '<a data-reader-open hidden aria-label="打开独立页面" title="打开独立页面">↗</a></div>'
+             '<p data-reader-status role="status" class="sr-only"></p>'
+             '<p class="atlas-placeholder sr-only" data-reader-placeholder>选择一个回合，正文将在这里显示。</p>'
+             '<div data-reader-content aria-busy="false" tabindex="-1"></div>'
+             '</section></div></section></div>')
     return body
 
 
@@ -831,7 +1043,10 @@ def turn_navigation(result: dict[str, Any], return_to: str) -> str:
             label_back = '返回搜索结果' if urlsplit(return_to).path == '/search' else '返回目录'
             body += f'<a href="{escape(return_to, quote=True)}">{label_back}</a>'
         if result[key] is not None:
-            body += f'<a href="{escape(turn_url(session, result[key], return_to, saved=result.get("pinned", False)), quote=True)}">{label}</a>'
+            shortcut = '[' if key == 'previous' else ']'
+            marker = ' data-turn-prev' if key == 'previous' else ' data-turn-next'
+            body += (f'<a{marker} aria-keyshortcuts="{shortcut}" '
+                     f'href="{escape(turn_url(session, result[key], return_to, saved=result.get("pinned", False)), quote=True)}">{label}</a>')
         else:
             body += f'<span class="count">{label}：无</span>'
     return body + '</nav>'
@@ -851,28 +1066,67 @@ def search_form(app: Journal, query: str = "", project_id: str | None = None,
         session = app.session_summary(thread, instance)
         label = f'{session["name"] or session["id"]} · {session["id"]} · 来源 {instance[:8]}'
         session_options += f'<option value="{escape(scope, quote=True)}" selected>{escape(label)}</option>'
-    return ('<section class="source" aria-label="搜索已保存正文"><h2>搜索已保存正文</h2>'
-        '<form class="search-form" action="/search" method="get">'
-        f'<label>中文或混合文本<input name="q" value="{escape(query, quote=True)}" type="search"></label>'
-        f'<label>项目范围<select name="project">{project_options}</select></label>'
-        '<label>筛选会话名称<input type="search" data-session-filter placeholder="按需查找会话"></label>'
-        f'<label>会话范围<select name="scope" data-session-options>{session_options}</select></label>'
+    expanded = ' open' if not query else ''
+    selected_project = next((project for project in projects if project["id"] == project_id), None)
+    active_filters = []
+    if selected_project is not None:
+        context = project_contexts(projects).get(selected_project["id"], "")
+        project_label = project_name(selected_project["label"])
+        if context:
+            project_label += ' · ' + context
+        active_filters.append(('项目', project_label))
+    if scope:
+        instance, thread = json.loads(scope)
+        session = app.session_summary(thread, instance)
+        active_filters.append(('会话', session["name"] or thread))
+    filter_summary = ''
+    if active_filters:
+        chips = ''.join(f'<span class="scope-chip"><b>{escape(label)}</b>{escape(value)}</span>'
+                        for label, value in active_filters)
+        clear_values = {'q': query} if query else {}
+        clear_href = '/search' + ('?' + urlencode(clear_values) if clear_values else '')
+        filter_summary = (f'<div class="search-scope" role="status">{chips}'
+                          f'<a href="{escape(clear_href, quote=True)}">清除筛选</a></div>')
+    return ('<section class="search-query" aria-label="搜索已保存正文">'
+        '<h2 class="sr-only">搜索已保存正文</h2><form class="search-form" action="/search" method="get">'
+        '<div class="search-query-row"><label class="sr-only" for="search-query">搜索正文</label>'
+        f'<input id="search-query" name="q" value="{escape(query, quote=True)}" type="search" autocomplete="off" '
+        'placeholder="搜索正文…"><button type="submit">搜索</button></div>'
+        + filter_summary +
+        f'<details class="search-advanced"{expanded}><summary>筛选</summary>'
+        '<div class="search-filter-grid">'
+        f'<label><span class="sr-only">项目范围</span><select name="project" aria-label="项目范围">{project_options}</select></label>'
+        f'<label><span class="sr-only">会话范围</span><select name="scope" data-session-options aria-label="会话范围">{session_options}</select></label>'
         '<button type="button" data-session-more hidden>加载更多会话</button>'
-        '<button type="submit">搜索</button></form></section>')
+        '</div></details></form></section>')
 
 
 def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
     if result["emptyQuery"]:
-        return '<p role="status">请输入搜索关键词。</p>'
+        return '<div class="empty"><h2>输入关键词</h2></div>'
     if not result["total"]:
-        return ('<section class="source" role="status"><h2>未找到相关内容</h2>'
-                f'<p>当前范围内没有匹配“{escape(result["query"])}”的已保存正文。请尝试其他关键词，或扩大搜索范围。</p></section>')
-    body = f'<section class="search-results-summary" aria-label="搜索结果操作"><p role="status">共 {result["total"]} 条记录 · 当前第 {result["offset"] + 1}—{min(result["total"], result["offset"] + result["limit"])} 条</p>'
+        return '<section class="empty" role="status"><h2>没有匹配</h2></section>'
+    page_number = result['offset'] // result['limit'] + 1
+    total_pages = max(1, (result['total'] + result['limit'] - 1) // result['limit'])
+    body = f'<section class="search-results-summary" aria-label="搜索结果操作"><p role="status">{result["total"]} 条</p>'
     body += selection_toolbar('/search?' + urlencode(options)) + '</section>'
+    def pagination() -> str:
+        if total_pages <= 1:
+            return ''
+        links = ''
+        if result['offset']:
+            previous = '/search?' + urlencode({**options, 'offset': max(0, result['offset'] - result['limit']), 'limit': result['limit']})
+            links += f'<a href="{escape(previous, quote=True)}">上一页</a>'
+        if result['nextOffset'] is not None:
+            following = '/search?' + urlencode({**options, 'offset': result['nextOffset'], 'limit': result['limit']})
+            links += f'<a href="{escape(following, quote=True)}">下一页</a>'
+        return (f'<nav class="search-pagination" aria-label="搜索结果分页"><span>第 {page_number} / {total_pages} 页</span>'
+                f'<span class="pager-links">{links}</span></nav>')
+    body += pagination() + '<div class="search-result-list">'
     seen_sessions: set[tuple[str, str]] = set()
-    labels = {"text": "消息正文", "result": "工具返回文本", "error": "工具错误文本"}
-    for hit in result["results"]:
-        kind = "用户提示" if hit["type"] == "userMessage" else "AI 过程消息" if hit["phase"] == "commentary" else "AI 最终回答" if hit["phase"] == "final_answer" else "AI 消息（阶段未知）" if hit["kind"] == "message" else labels[hit["field"]]
+    labels = {"text": "正文", "result": "工具结果", "error": "工具错误"}
+    for index, hit in enumerate(result["results"]):
+        kind = "你" if hit["type"] == "userMessage" else "AI · 过程" if hit["phase"] == "commentary" else "AI · 回答" if hit["phase"] == "final_answer" else "AI" if hit["kind"] == "message" else labels[hit["field"]]
         completeness = {"complete": "已取得文本", "partial": "部分内容", "unknown": "完整性未知"}[hit["completeness"]]
         target = urlsplit(hit["url"])
         back = '/search?' + urlencode(options)
@@ -882,18 +1136,19 @@ def search_results(result: dict[str, Any], options: dict[str, str]) -> str:
         if identity not in seen_sessions:
             seen_sessions.add(identity)
             choice = selection_checkbox(*identity, hit['sessionName'] or hit['threadId'])
-        body += f'<article class="message search-result">{choice}<h2><a href="{escape(href, quote=True)}">{kind} · {escape(hit["sessionName"] or "未命名会话")}</a></h2>'
-        state = f' · {completeness}' if hit["completeness"] != "complete" else ''
-        body += f'<p class="count">项目：{escape(hit["project"]["label"])}{state}</p>'
+        started = hit.get('startedAtMs')
+        started_label = (source_time(started / 1000) if isinstance(started, (int, float))
+                         else '保存于 ' + saved_time(hit.get('savedAt'))[:16])
+        state = f'<span>{completeness}</span>' if hit["completeness"] != "complete" else ''
+        body += f'<article class="search-result" style="--i:{min(index, 8)}">{choice}<h2><a href="{escape(href, quote=True)}">{escape(hit["sessionName"] or "未命名会话")}</a></h2>'
+        body += (f'<div class="session-context"><span>{escape(kind)}</span><span>{escape(project_name(hit["project"]["label"]))}</span>'
+                 f'<span>{escape(started_label)}</span>{state}</div>')
         query = result['query']
         highlighted = ('<mark>' + escape(query) + '</mark>').join(escape(part) for part in hit['snippet'].split(query))
         body += f'<pre>{highlighted}</pre>'
         body += ''.join(f'<p class="gap">{escape(reason)}</p>' for reason in hit["reasons"])
-        body += f'<footer><a href="{escape(hit["evidenceUrl"], quote=True)}" target="_blank" rel="noopener">查看来源证据 ↗</a> · 点击标题查看完整原文。</footer></article>'
-    for label, offset in (("上一页", max(0, result["offset"] - result["limit"]) if result["offset"] else None), ("下一页", result["nextOffset"])):
-        if offset is not None:
-            href = '/search?' + urlencode({**options, "offset": offset, "limit": result["limit"]})
-            body += f'<a class="action" href="{escape(href, quote=True)}">{label}</a> '
+        body += f'<footer><a href="{escape(hit["evidenceUrl"], quote=True)}" target="_blank" rel="noopener">证据 ↗</a></footer></article>'
+    body += '</div>' + pagination()
     return body
 
 
@@ -1080,16 +1335,16 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif url.path == '/api/exclusions':
                     self.respond(200, 'application/json', json.dumps(app.exclusions(), ensure_ascii=False))
                 elif url.path == '/manage/exclusions':
-                    body = '<h1>删除管理</h1><section class="source management-help"><h2>删除归档，不改变原会话</h2>' + deletion_scope() + '</section>'
+                    body = ('<h1>删除管理</h1><p class="deletion-safety">仅删除本应用管理的副本，不改变 Codex 原会话。</p>')
                     summaries = app.sessions()
-                    body += f'<section class="source"><h2>已归档会话 <span class="count">{len(summaries)} 个</span></h2>'
+                    body += f'<h2>已归档 <span class="count">{len(summaries)}</span></h2>'
                     if not summaries:
                         body += '<p class="empty">暂无已归档会话。</p>'
                     body += '<ul class="manage-list">'
                     for summary in summaries:
                         href = '/manage/delete/' + quote(summary['id'], safe='') + '?' + urlencode({'source': summary['source']['instance']})
-                        body += f'<li><span>{escape(summary["name"] or summary["id"])}</span><a href="{escape(href, quote=True)}">查看删除选项</a></li>'
-                    body += '</ul></section><h2>删除排除</h2><p class="muted">用于防止已删除且符合原采集条件的会话再次归档，不会扩大历史采集范围。</p>'
+                        body += f'<li><span>{escape(summary["name"] or summary["id"])}</span><a href="{escape(href, quote=True)}">删除</a></li>'
+                    body += '</ul><h2>删除排除</h2>'
                     notices = {'deleted': '已删除受管理日志，并保留删除排除。', 'cleanupPending': '正文与证据已删除；附件清理未完成，请修复文件占用或权限后重试。重启也会重试。',
                                'restored': '已解除删除排除；仅在仍符合原采集条件且来源可取得时重新归档。已删除的历史副本不会恢复。'}
                     notice = notices.get(options.get('notice', [''])[0])
@@ -1100,7 +1355,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                         body += '<p class="empty">暂无被删除排除的会话。</p>'
                     for entry in entries:
                         pending = entry['status'] == 'cleanupPending'
-                        body += f'<section class="source"><h2>{escape(entry["id"])}</h2><p>来源实例：<code>{escape(entry["sourceInstance"])}</code></p><p>{"附件清理未完成，保持删除排除" if pending else "受管理日志已删除，保持删除排除"}</p>'
+                        body += f'<section class="exclusion"><h2>{escape(entry["id"])}</h2><p><code>{escape(entry["sourceInstance"])}</code></p>'
                         if pending:
                             body += f'<p class="gap">{escape(entry["error"] or "等待清理")}</p>'
                             body += management_form('retry', entry['id'], entry['sourceInstance'], '重试附件清理')
@@ -1132,7 +1387,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     if url.path == "/api/search":
                         self.respond(200, "application/json", json.dumps(result, ensure_ascii=False))
                     else:
-                        content = '<a href="/">← 项目列表</a><h1>正文搜索</h1>'
+                        content = ('<header class="page-heading"><div><a class="directory-back" href="/">← 项目归档</a>'
+                                   '<h1>正文搜索</h1></div></header>')
                         content += search_form(app, result["query"], result["scope"]["project"], scope)
                         content += search_results(result, values)
                         self.respond(200, "text/html", page("正文搜索", content, active='search', projects=app.project_choices()))
@@ -1141,7 +1397,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                 elif url.path == "/api/status":
                     self.respond(200, "application/json", json.dumps(status(), ensure_ascii=False))
                 elif url.path == '/status':
-                    self.respond(200, 'text/html', page('采集状态', '<h1>采集状态</h1>' + collection_html(status(), str(app.database)), active='status', projects=app.project_choices()))
+                    self.respond(200, 'text/html', page('采集状态', collection_html(status(), str(app.database), app.sessions()), active='status', projects=app.project_choices()))
                 elif url.path == "/api/projects":
                     self.respond(200, "application/json", json.dumps(app.projects(), ensure_ascii=False))
                 elif url.path == "/api/version":
@@ -1204,8 +1460,8 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
                     if destination.scheme or destination.netloc or not (destination.path.startswith('/project/') or destination.path == '/search' or (destination.path.startswith('/session/') and destination.path.count('/') == 2)):
                         back = '/project/' + session['project']['id']
                     navigation = turn_navigation(result, back)
-                    version_note = ('<details class="reader-version" data-reader-version><summary>保存版本</summary>'
-                        '<p>正在查看命中时的保存版本；原文与证据固定在该版本。</p><code>' + escape(session['savedAt']) + '</code></details>') if options.get('saved') else ''
+                    version_note = ('<details class="reader-version" data-reader-version><summary>版本</summary>'
+                        '<code>' + escape(session['savedAt']) + '</code></details>') if options.get('saved') else ''
                     content = version_note + session_body(session, back, result['ordinal'])
                     if options.get('view') == ['reader']:
                         self.respond(200, 'text/html', content)

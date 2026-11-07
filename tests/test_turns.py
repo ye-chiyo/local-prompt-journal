@@ -115,7 +115,7 @@ class IndependentTurnAcceptance(unittest.TestCase):
                     self.assertNotIn('新版第一回合', reader)
                     self.assertNotIn('<!doctype html>', reader)
                     self.assertNotIn('全局正文搜索', reader)
-                    self.assertIn('原文与证据固定在该版本', reader)
+                    self.assertIn('<summary>版本</summary>', reader)
                     self.assertIn('saved=' + first['savedAt'].replace(':', '%3A').replace('+', '%2B'), reader)
                     legacy = read(old_hit['url'].replace('/turn/turn?', '?'))
                     self.assertIn('第一回合原文', legacy)

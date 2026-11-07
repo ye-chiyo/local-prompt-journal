@@ -175,7 +175,7 @@ def main():
         "allEvidenceReferencesResolve": all(references) and len(references) == len(wanted),
         **evidence_checks(package),
         "allMessageEvidenceLinksVisibleAndReadable": message_links_match,
-        "htmlHasPhaseLabels": all(s in html for s in ["AI 过程消息", "AI 最终回答", "用户原文"]),
+        "htmlHasPhaseLabels": all(s in html for s in ["AI · 过程", "AI · 回答", "你"]),
         "messages": len(got), "sourceItemCount": session["sourceItemCount"],
         "schemaVersion": package["schemaVersion"], "exportBytes": len(exported),
     }

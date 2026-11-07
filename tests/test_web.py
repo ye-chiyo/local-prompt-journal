@@ -43,8 +43,11 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         with urlopen(self.url + "/session/sample-session/turn/turn-1") as response:
             html = response.read().decode()
             self.assertIn("default-src 'none'", response.headers["Content-Security-Policy"])
-        for text in ("请记录原文。", "AI 过程消息", "AI 最终回答", 'href="/status"'):
+        for text in ("请记录原文。", "AI · 过程", "AI · 回答", 'href="/status"'):
             self.assertIn(text, html)
+        self.assertIn('id="global-search"', html)
+        self.assertIn('aria-keyshortcuts="Control+K /"', html)
+        self.assertIn('id="shortcut-dialog"', html)
         self.assertNotIn("应用自带 SQLite 数据库", html)
         self.assertNotIn("首次启用：", html)
         self.assertNotIn("选择导出范围", html)
@@ -95,8 +98,6 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             def handle_starttag(self, tag, attrs):
                 if tag == "a":
                     self.current = [dict(attrs).get("href"), ""]
-                if tag == 'details' and dict(attrs).get('class') == 'project-path':
-                    self.paths.append(dict(attrs))
 
             def handle_data(self, data):
                 if self.current is not None:
@@ -108,6 +109,7 @@ class LocalInterfaceAcceptance(unittest.TestCase):
                     self.current = None
 
         home = urlopen(self.url + "/").read().decode()
+        self.assertIn('data-project-filter', home)
         parsed = ProjectLinks()
         parsed.feed(home)
         navigation_labels = []
@@ -122,8 +124,7 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             self.assertIn("目录会话-", project_page)
             self.assertNotIn("目录不应加载的正文", project_page)
         self.assertEqual(len(set(navigation_labels)), 3)
-        self.assertTrue(parsed.paths)
-        self.assertTrue(all('open' not in attrs for attrs in parsed.paths))
+        self.assertIn('title="' + self.app.projects()[0]["label"] + '"', home)
 
     def test_project_page_lists_sessions_without_rendering_each_full_timeline(self):
         project_id = self.app.projects()[0]["id"]
@@ -131,11 +132,15 @@ class LocalInterfaceAcceptance(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("中文验收样本", html)
         self.assertIn('/session/sample-session/turn/turn-1?source=', html)
+        self.assertIn('class="turn-links turn-ruler"', html)
+        self.assertIn('aria-label="回合 1，已完成"', html)
+        self.assertIn('<h2 class="sr-only">会话目录</h2>', html)
+        self.assertEqual(html.count('<h1'), 1)
         self.assertNotIn("请记录原文。", html)
         self.assertNotIn("正在核对中文。", html)
         self.assertNotIn('数据库文件', html)
         self.assertNotIn('aria-label="搜索已保存正文"', html)
-        self.assertIn('<details data-key="directory:info"><summary>来源信息</summary>', html)
+        self.assertNotIn('data-key="directory:info"', html)
         self.assertNotIn("以下按来源会话开始时间升序排列", html)
 
     def test_directory_announces_current_session_without_checking_it_for_batch_actions(self):
@@ -191,7 +196,7 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         route = "/project/" + project_id + "?offset=0&limit=10"
         with urlopen(self.url + route) as response:
             html = response.read().decode()
-        self.assertIn("共 13 个会话", html)
+        self.assertIn("13 个会话", html)
         self.assertIn("目录会话-catalog-1", html)
         self.assertIn("目录会话-catalog-2", html)
         for hidden in ("目录会话-catalog-0", "目录会话-catalog-11", "目录不应加载的正文", "工具最终结果"):
@@ -232,6 +237,21 @@ class LocalInterfaceAcceptance(unittest.TestCase):
         self.assertIn('href="/status"', html)
         self.assertNotIn('数据库文件', html)
         self.assertIn('请记录原文。', unescape(re.sub(r'<[^>]*>', '', html)))
+
+    def test_search_page_shows_active_scope_and_clear_action(self):
+        project_id = self.app.projects()[0]["id"]
+        route = "/search?" + urlencode({"q": "请记录", "project": project_id})
+        html = urlopen(self.url + route).read().decode()
+        self.assertIn("<summary>筛选</summary>", html)
+        self.assertIn("清除筛选", html)
+        self.assertIn("data-session-options", html)
+        self.assertNotIn("data-session-filter", html)
+
+    def test_status_page_keeps_every_result_count_without_explanatory_copy(self):
+        html = urlopen(self.url + "/status").read().decode()
+        for label in ("范围外", "读取失败", "容量暂停", "未分类", "已保存但本轮未返回", "删除排除"):
+            self.assertIn(f"<dt>{label}</dt>", html)
+        self.assertNotIn("本轮发现按", html)
 
     def test_search_highlights_literal_matches_and_selects_each_session_once(self):
         query = '<b>线索</b>'

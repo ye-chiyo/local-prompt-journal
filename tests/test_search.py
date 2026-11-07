@@ -102,7 +102,7 @@ class SavedSearchAcceptance(unittest.TestCase):
             html = response.read().decode()
         self.assertIn("旧版沙洲", html)
         self.assertNotIn("新版渡口", html)
-        self.assertIn("命中时的保存版本", html)
+        self.assertIn("<summary>版本</summary>", html)
         with urlopen(self.url + old_hit["evidenceUrl"]) as response:
             evidence = json.load(response)
         raw = evidence["response"]["result"]["data"][6]
