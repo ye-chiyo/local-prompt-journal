@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>用量概览 · 示例预览</title>
+<style>
+:root{color-scheme:light;--ground:#e9ede6;--paper:#fffef9;--ink:#1d2823;--muted:#647169;--line:#d6ddd3;--accent:#2d5a49;--soft:#dce9df;--heat-0:#edf0e9;--heat-1:#c9ddc5;--heat-2:#92b68d;--heat-3:#55865d;--heat-4:#2d5a49}
+*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.6 'Segoe UI','Microsoft YaHei',sans-serif}
+button,select{font:inherit;color:inherit;cursor:pointer}button,select{background:var(--paper);border:1px solid var(--line);border-radius:6px;min-height:36px}button{padding:6px 12px}select{padding:6px 28px 6px 10px;max-width:100%}button:hover{background:var(--soft)}button:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid #2f6853;outline-offset:3px}
+header{height:58px;display:flex;align-items:center;gap:26px;padding:0 26px;background:var(--paper);border-bottom:1px solid var(--line)}header strong{font-size:16px;color:#1f4638;white-space:nowrap}header span{color:var(--muted);white-space:nowrap}header .current{color:var(--accent);font-weight:600}header small{margin-left:auto;color:var(--muted);white-space:nowrap}
+aside{position:fixed;top:58px;bottom:0;width:210px;padding:26px 20px;border-right:1px solid var(--line)}aside p{color:var(--muted);font-size:12px;margin:0 10px 14px}aside div{padding:10px;margin:3px 0}aside .chosen{background:var(--soft);color:var(--accent);border-radius:6px}
+main{margin-left:210px;padding:30px 34px 36px;max-width:1600px}h1{font:600 27px/1.4 'Noto Serif SC','STSong',serif;margin:0}h2{font-size:16px;line-height:1.5;margin:0}
+.toolbar{margin:22px 0 26px}.filters{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.range{display:flex;gap:3px;padding:3px;background:#dfe5dc;border-radius:8px}.range button{background:transparent;border:0;min-height:32px;padding:5px 11px;color:var(--muted)}.range button[aria-pressed=true]{background:var(--paper);color:var(--accent);font-weight:600}.field{display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:12px;color:var(--muted)}.field select{color:var(--ink);font-size:13px}
+.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;padding:22px 0 24px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.summary>div{padding-left:24px;border-left:1px solid var(--line)}.summary>div:first-child{padding-left:0;border:0}.summary dt{color:var(--muted);font-size:12px}.summary dd{font-size:31px;line-height:1.3;font-variant-numeric:tabular-nums;margin:8px 0 0;letter-spacing:-.02em;color:#1f4638}.summary small{display:block;font-size:12px;margin-top:8px;color:var(--muted)}
+.surface{background:var(--paper);padding:22px 24px;min-width:0;border-radius:8px}.timeline{margin-top:24px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:34px}.section-head select{font-size:12px;min-height:32px}
+.heatmap{--cell:clamp(18px,2.15vw,29px);--gap:7px;margin:18px auto 0;width:fit-content;max-width:100%}.months{display:grid;grid-template-columns:repeat(var(--columns,14),var(--cell));gap:var(--gap);margin-left:28px;height:25px;font-size:12px;color:var(--muted)}.months span{white-space:nowrap}.calendar{display:flex;gap:10px}.weekdays{display:grid;grid-template-rows:repeat(7,var(--cell));gap:var(--gap);width:18px;flex:none;align-items:center;font-size:11px;color:var(--muted)}.heat-grid{display:grid;grid-template-rows:repeat(7,var(--cell));grid-auto-flow:column;grid-auto-columns:var(--cell);gap:var(--gap)}
+.heat-cell,.heat-placeholder,.legend-cell{border-radius:4px;background:var(--heat-0)}.heat-cell{width:var(--cell);height:var(--cell);min-height:0;padding:0;border:0;transition:transform 160ms ease,box-shadow 160ms ease;position:relative}.heat-cell[data-level="1"],.legend-cell[data-level="1"]{background:var(--heat-1)}.heat-cell[data-level="2"],.legend-cell[data-level="2"]{background:var(--heat-2)}.heat-cell[data-level="3"],.legend-cell[data-level="3"]{background:var(--heat-3)}.heat-cell[data-level="4"],.legend-cell[data-level="4"]{background:var(--heat-4)}.heat-cell:hover,.heat-cell:focus-visible{transform:translateY(-2px) scale(1.1);outline:2px solid var(--ink);outline-offset:2px;z-index:1}.heat-placeholder{visibility:hidden}.heat-legend{display:flex;gap:5px;align-items:center;justify-content:flex-end;margin-top:14px;color:var(--muted);font-size:11px}.legend-cell{display:block;width:11px;height:11px}
+.analysis{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-top:20px;align-items:stretch}.hours{display:flex;align-items:flex-end;gap:5px;height:150px;margin-top:28px}.bar{padding:0;flex:1;min-width:0;min-height:0;background:#b3c6b5;border:0;border-radius:3px 3px 0 0;transition:background 160ms ease,transform 160ms ease}.bar.peak{background:var(--accent)}.bar:hover,.bar:focus-visible{background:#1f4638;transform:translateY(-3px)}.axis{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:10px;font-variant-numeric:tabular-nums}
+.ring-area{display:flex;align-items:center;gap:20px;margin:20px 0 0}.ring{width:164px;height:164px;flex:none;position:relative;display:grid;place-items:center}.ring svg{display:block;width:100%;height:100%;overflow:visible}.ring-center{position:absolute;inset:42px 24px;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center}.ring-center strong{font-size:24px;line-height:1.3;font-variant-numeric:tabular-nums}.ring-center small{color:var(--muted);font-size:11px;margin-top:4px;max-width:116px;line-height:1.4}
+.ring-sector{cursor:pointer;outline:none}.ring-segment{pointer-events:none;transform-origin:120px 120px;transition:transform 220ms ease,opacity 220ms ease,filter 220ms ease;stroke:var(--paper);stroke-width:2;stroke-linejoin:round}.ring-sector.is-active .ring-segment{transform:translate(var(--dx),var(--dy));filter:brightness(1.08)}.ring.has-active .ring-sector:not(.is-active) .ring-segment{opacity:.4}.ring-sector:focus-visible .ring-segment{stroke:var(--ink);stroke-width:3}
+.legend{list-style:none;padding:0;margin:0;flex:1;min-width:0;font-size:12px}.legend li+li{margin-top:8px}.model-choice{width:100%;border:0;min-height:40px;text-align:left;padding:5px 7px;background:transparent;transition:background 160ms ease}.model-choice.is-active{background:var(--soft)}.model-line{display:flex;align-items:center;gap:7px}.model-name{overflow-wrap:anywhere}.swatch{display:inline-block;width:8px;height:8px;border-radius:2px;flex:none}.legend b{margin-left:auto;font-weight:500;font-variant-numeric:tabular-nums;flex:none}.legend small{display:block;padding-left:15px;color:var(--muted);margin-top:2px}
+.details{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;margin-top:20px}table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}caption{text-align:left;font-size:16px;font-weight:600;margin-bottom:14px}th{text-align:left;color:var(--muted);font-size:12px;font-weight:400}td,th{padding:13px 0;border-bottom:1px solid var(--line)}td:not(:first-child),th:not(:first-child){text-align:right;padding-left:10px}tbody tr:last-child td{border-bottom:0}
+.chart-tooltip{position:fixed;z-index:1000;pointer-events:none;background:#203c30;color:#fffef9;border:1px solid #456151;border-radius:8px;padding:12px 14px;min-width:200px;max-width:280px;opacity:0;visibility:hidden;transform:translateY(5px);transition:opacity 140ms ease,transform 140ms ease,visibility 140ms;font-size:12px;box-shadow:0 8px 22px #1d28231f}.chart-tooltip.visible{opacity:1;visibility:visible;transform:translateY(0)}.chart-tooltip strong{display:block;font-size:13px;margin-bottom:6px;font-weight:600}.tooltip-row{display:flex;justify-content:space-between;gap:22px;line-height:1.9}.tooltip-row span{color:#cbdcce}.tooltip-row b{font-weight:500;font-variant-numeric:tabular-nums}.tooltip-total{font-size:17px;font-variant-numeric:tabular-nums;margin-bottom:5px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}::selection{background:var(--soft);color:var(--ink)}
+@media(max-width:1250px){.filters{gap:10px}.ring-area{gap:8px}.ring{width:138px;height:138px}.ring-center{inset:34px 18px}.ring-center strong{font-size:21px}.model-choice{padding:5px 3px}.model-name{font-size:11px}}
+@media(max-width:1100px){aside{width:170px;padding:24px 14px}main{margin-left:170px;padding:26px 22px}.analysis,.details{gap:16px}.surface{padding:20px}.summary>div{padding-left:16px}.summary dd{font-size:28px}header{gap:18px;padding:0 20px}.ring{width:125px;height:125px}.ring-center strong{font-size:19px}.ring-center small{font-size:10px}.ring-center{inset:32px 15px}.hours{height:132px}.ring-area{min-height:166px}.legend small{font-size:10px}.legend b{font-size:11px}}
+@media(max-width:850px){aside{display:none}main{margin:0;padding:24px 20px}.summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.summary>div:nth-child(3){padding-left:0;border:0}header span{display:none}.analysis,.details{grid-template-columns:1fr}.heatmap{--cell:clamp(14px,3.8vw,25px);--gap:5px}.ring{width:170px;height:170px}.ring-area{gap:25px}.ring-center{inset:45px 24px}.ring-center strong{font-size:24px}.model-name{font-size:13px}.legend small,.legend b{font-size:12px}}
+@media(max-width:450px){main{padding:20px 12px}.surface{padding:16px}.heatmap{--cell:clamp(12px,3.3vw,15px);--gap:4px}.range button{padding:5px 8px}.ring-area{gap:10px}.ring{width:140px;height:140px}.ring-center{inset:34px 20px}.ring-center strong{font-size:20px}}
+@media(prefers-reduced-motion:reduce){.heat-cell,.ring-segment,.bar,.model-choice,.chart-tooltip{transition:none}.heat-cell:hover,.heat-cell:focus-visible,.bar:hover,.bar:focus-visible,.ring-sector.is-active .ring-segment{transform:none}}
+</style>
+</head>
+<body>
+<header><strong>本机会话记录</strong><span>项目</span><span>搜索</span><span class="current">用量概览</span><span>采集状态</span><small>示例预览</small></header>
+<aside><p>统计范围</p><div class="chosen">全部项目</div><div>日志项目</div><div>示例项目 A</div><div>示例项目 B</div></aside>
+<main>
+<h1>用量概览</h1>
+<div class="toolbar">
+ <div class="filters">
+  <div class="range" aria-label="统计时段"><button data-days="1" aria-pressed="false">今天</button><button data-days="7" aria-pressed="false">最近 7 天</button><button data-days="30" aria-pressed="false">最近 30 天</button><button data-days="90" aria-pressed="true">最近 90 天</button></div>
+  <label class="field">项目 <select id="project"><option value="all">全部项目</option><option value="journal">日志项目</option><option value="other">示例项目 A</option></select></label>
+  <label class="field">会话 <select id="source"><option value="main">主会话</option><option value="child">子 agent</option><option value="all">全部</option></select></label>
+ </div>
+
+</div>
+<dl class="summary">
+ <div><dt>完成回合</dt><dd id="rounds"></dd></div>
+ <div><dt>总 token</dt><dd id="tokens"></dd><small>输入 <span id="input"></span> · 输出 <span id="output"></span></small></div>
+ <div><dt>缓存输入 token</dt><dd id="cached"></dd></div>
+ <div><dt>活跃天数</dt><dd id="active"></dd></div>
+</dl>
+<section class="surface timeline">
+ <div class="section-head"><h2>时间趋势</h2><select id="metric" aria-label="趋势指标"><option value="tokens">token</option><option value="rounds">回合数</option></select></div>
+ <div class="heatmap">
+  <div class="months" id="months" aria-hidden="true"></div>
+  <div class="calendar"><div class="weekdays" aria-hidden="true"><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span><span>日</span></div><div class="heat-grid" id="trend" role="group" aria-label="每日用量热力图"></div></div>
+  <div class="heat-legend" id="heat-legend" aria-label="热力图用量等级"></div>
+ </div>
+</section>
+<div class="analysis">
+ <section class="surface"><div class="section-head"><h2>活跃时间</h2></div><div class="hours" id="hours" aria-label="每小时回合数"></div><div class="axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div></section>
+ <section class="surface">
+  <div class="section-head"><h2>模型用量分布</h2></div>
+  <div class="ring-area"><div class="ring" id="ring"><svg viewBox="0 0 240 240" aria-label="模型用量环状图" role="group" id="ring-chart"></svg><div class="ring-center"><strong id="ring-total"></strong><small id="ring-label">总 token</small></div></div><ul class="legend" id="legend"></ul></div>
+ </section>
+</div>
+<div class="details">
+ <section class="surface"><table><caption>模型明细</caption><thead><tr><th>模型</th><th>token</th><th>占比</th></tr></thead><tbody id="models"></tbody></table></section>
+ <section class="surface"><table><caption>项目用量</caption><thead><tr><th>项目</th><th>完成回合</th><th>token</th></tr></thead><tbody id="projects"></tbody></table></section>
+</div>
+<div class="chart-tooltip" id="chart-tooltip" role="tooltip"></div>
+<p class="sr-only" id="feedback" role="status"></p>
+</main>
+<script>
+let days=90;
+const colors=['#2d5a49','#8a9b70','#bf8a60'];
+const names=['GPT-6.1 Sol','GPT-6 Luna','DeepSeek V4 Flash'];
+const shares=[.62,.26,.12];
+const compact=value=>value>=1e6?(value/1e6).toFixed(2)+' M':value>=1e3?(value/1e3).toFixed(1)+' K':String(value);
+const number=value=>Math.round(value).toLocaleString('zh-CN');
+const baseWeights=[6,9,0,12,15,8,0,17,23,14,9,19,13,0,12,21,29,13,9,25,16,0,19,24,15,20,10,22,18,26];
+const dailyWeights=Array.from({length:90},(_,index)=>baseWeights[index%30]*(index<30?.65:index<60?.82:1));
+const tooltip=document.querySelector('#chart-tooltip');
+let tooltipAnchor=null;
+let modelAmounts=[];
+let modelInputs=[];
+let modelOutputs=[];
+let currentTotal=0;
+function allocate(total,weights){
+ const sum=weights.reduce((sum,value)=>sum+value,0);
+ if(sum===0)return weights.map(()=>0);
+ const amounts=weights.map(weight=>Math.floor(total*weight/sum));
+ const remaining=total-amounts.reduce((sum,value)=>sum+value,0);
+ const order=weights.map((weight,index)=>({index,remainder:total*weight/sum-amounts[index]})).sort((left,right)=>right.remainder-left.remainder);
+ for(let index=0;index<remaining;index++)amounts[order[index].index]++;
+ return amounts;
+}
+function positionTooltip(anchor,event){
+ const rect=anchor.getBoundingClientRect();
+ const width=tooltip.offsetWidth,height=tooltip.offsetHeight;
+ const pointer=event&&event.type.startsWith('pointer');
+ const anchorX=pointer?event.clientX:rect.left+rect.width/2;
+ const anchorY=pointer?event.clientY:rect.top;
+ const left=Math.max(10,Math.min(window.innerWidth-width-10,anchorX-width/2));
+ const above=anchorY-height-16;
+ const top=Math.max(10,Math.min(window.innerHeight-height-10,above>=10?above:anchorY+24));
+ tooltip.style.left=left+'px';tooltip.style.top=top+'px';
+}
+function showTooltip(anchor,title,total,rows,event){
+ if(tooltipAnchor&&tooltipAnchor!==anchor)tooltipAnchor.removeAttribute('aria-describedby');
+ tooltipAnchor=anchor;
+ tooltip.innerHTML='<strong>'+title+'</strong><div class="tooltip-total">'+number(total)+' token</div>'+rows.map(([label,value])=>'<div class="tooltip-row"><span>'+label+'</span><b>'+value+'</b></div>').join('');
+ anchor.setAttribute('aria-describedby','chart-tooltip');
+ positionTooltip(anchor,event);
+ tooltip.classList.add('visible');
+}
+function hideTooltip(){
+ tooltip.classList.remove('visible');
+ if(tooltipAnchor)tooltipAnchor.removeAttribute('aria-describedby');
+ tooltipAnchor=null;
+}
+function bindTooltip(anchor,show,hide=()=>{}){
+ anchor.addEventListener('pointerenter',event=>show(event));
+ anchor.addEventListener('pointermove',event=>{if(tooltipAnchor===anchor)positionTooltip(anchor,event)});
+ anchor.addEventListener('focus',event=>show(event));
+ anchor.addEventListener('click',event=>show(event));
+ anchor.addEventListener('pointerleave',()=>{if(document.activeElement!==anchor){hideTooltip();hide()}});
+ anchor.addEventListener('blur',()=>{hideTooltip();hide()});
+}
+function renderHeatmap(rounds,total){
+ const metric=document.querySelector('#metric').value;
+ const weights=dailyWeights.slice(-days);
+ const dailyRounds=allocate(rounds,weights);
+ const dailyTokens=allocate(total,weights);
+ const dailyInput=allocate(Math.round(total*.9),weights);
+ const end=new Date(Date.UTC(2026,10,8));
+ const start=new Date(end);start.setUTCDate(start.getUTCDate()-days+1);
+ const leading=(start.getUTCDay()+6)%7;
+ const columns=Math.ceil((leading+days)/7);
+ const amounts=metric==='rounds'?dailyRounds:dailyTokens;
+ const maximum=Math.max(...amounts,1);
+ const grid=document.querySelector('#trend');
+ document.querySelector('.heatmap').style.setProperty('--columns',columns);
+ let markup='';
+ const months=new Map();
+ for(let position=0;position<columns*7;position++){
+  const index=position-leading;
+  if(index<0||index>=days){markup+='<span class="heat-placeholder" aria-hidden="true"></span>';continue}
+  const date=new Date(start);date.setUTCDate(date.getUTCDate()+index);
+  const iso=date.toISOString().slice(0,10);
+  const month=date.getUTCMonth()+1;
+  if(!months.has(month))months.set(month,Math.floor(position/7)+1);
+  const amount=amounts[index];
+  const level=amount===0?0:Math.max(1,Math.ceil(amount/maximum*4));
+  const label=iso+'：'+number(dailyTokens[index])+' token，'+dailyRounds[index]+' 回合';
+  markup+='<button class="heat-cell" data-level="'+level+'" data-index="'+index+'" data-date="'+iso+'" aria-label="'+label+'"></button>';
+ }
+ grid.innerHTML=markup;
+ document.querySelector('#months').innerHTML=Array.from(months,([month,column])=>'<span style="grid-column:'+column+'">'+month+'月</span>').join('');
+ const unit=metric==='rounds'?'回合':'token';
+ document.querySelector('#heat-legend').innerHTML='<span>少</span>'+[0,1,2,3,4].map(level=>'<i class="legend-cell" data-level="'+level+'" title="'+(level===0?'0':number(maximum*(level-1)/4)+'—'+number(maximum*level/4))+' '+unit+'"></i>').join('')+'<span>多</span>';
+ grid.querySelectorAll('button').forEach(cell=>{
+  const index=Number(cell.dataset.index);
+  const label=cell.dataset.date;
+  bindTooltip(cell,event=>showTooltip(cell,label,dailyTokens[index],[['输入',number(dailyInput[index])],['输出',number(dailyTokens[index]-dailyInput[index])],['完成回合',number(dailyRounds[index])]],event));
+ });
+}
+function point(radius,angle){
+ return [120+radius*Math.sin(angle),120-radius*Math.cos(angle)];
+}
+function segmentPath(start,end){
+ const outerStart=point(96,start),outerEnd=point(96,end),innerEnd=point(69,end),innerStart=point(69,start);
+ const large=end-start>Math.PI?1:0;
+ return 'M '+outerStart.join(' ')+' A 96 96 0 '+large+' 1 '+outerEnd.join(' ')+' L '+innerEnd.join(' ')+' A 69 69 0 '+large+' 0 '+innerStart.join(' ')+' Z';
+}
+function resetModel(){
+ document.querySelector('#ring').classList.remove('has-active');
+ document.querySelectorAll('[data-model]').forEach(item=>item.classList.remove('is-active'));
+ document.querySelector('#ring-total').textContent=compact(currentTotal);
+ document.querySelector('#ring-label').textContent='总 token';
+}
+function activateModel(index){
+ document.querySelector('#ring').classList.add('has-active');
+ document.querySelectorAll('[data-model]').forEach(item=>item.classList.toggle('is-active',Number(item.dataset.model)===index));
+ document.querySelector('#ring-total').textContent=compact(modelAmounts[index]);
+ document.querySelector('#ring-label').textContent=names[index];
+}
+function renderModels(total){
+ currentTotal=total;
+ modelAmounts=allocate(total,shares);
+ modelInputs=allocate(Math.round(total*.9),shares);
+ modelOutputs=modelAmounts.map((amount,index)=>amount-modelInputs[index]);
+ let angle=0;
+ document.querySelector('#ring-chart').innerHTML=shares.map((share,index)=>{
+  const start=angle,end=angle+share*Math.PI*2,mid=(start+end)/2;
+  angle=end;
+  const label=names[index]+'：'+number(modelAmounts[index])+' token，'+Math.round(share*100)+'%';
+  const path=segmentPath(start,end);
+  return '<g class="ring-sector" data-model="'+index+'" tabindex="0" role="button" aria-label="'+label+'"><path d="'+path+'" fill="transparent"></path><path class="ring-segment" d="'+path+'" fill="'+colors[index]+'" style="--dx:'+(Math.sin(mid)*5)+'px;--dy:'+(-Math.cos(mid)*5)+'px"></path></g>';
+ }).join('');
+ document.querySelector('#legend').innerHTML=names.map((name,index)=>'<li><button class="model-choice" data-model="'+index+'"><span class="model-line"><span class="swatch" style="background:'+colors[index]+'"></span><span class="model-name">'+name+'</span><b>'+Math.round(shares[index]*100)+'%</b></span><small>'+compact(modelAmounts[index])+' token</small></button></li>').join('');
+ document.querySelector('#models').innerHTML=names.map((name,index)=>'<tr><td>'+name+'</td><td>'+number(modelAmounts[index])+'</td><td>'+Math.round(shares[index]*100)+'%</td></tr>').join('');
+ document.querySelectorAll('[data-model]').forEach(item=>{
+  const index=Number(item.dataset.model);
+  const show=event=>{
+   activateModel(index);
+   showTooltip(item,names[index],modelAmounts[index],[['输入',number(modelInputs[index])],['输出',number(modelOutputs[index])],['占比',Math.round(shares[index]*100)+'%']],event);
+  };
+  bindTooltip(item,show,resetModel);
+  item.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();show(event)}});
+ });
+ resetModel();
+}
+function draw(){
+ hideTooltip();
+ const project=document.querySelector('#project').value;
+ const source=document.querySelector('#source').value;
+ const factor=(days===90?2.75:days===30?1:days===7?.26:.055)*(project==='all'?1:project==='journal'?.46:.32)*(source==='main'?1:source==='child'?.24:1.24);
+ const rounds=Math.round(428*factor),total=Math.round(6420000*factor);
+ const input=Math.round(total*.9);
+ const active=dailyWeights.slice(-days).filter(value=>value>0).length;
+ for(const [key,value] of Object.entries({rounds:number(rounds),tokens:compact(total),input:compact(input),output:compact(total-input),cached:compact(Math.round(total*.65)),active:active+' 天'}))document.getElementById(key).textContent=value;
+ renderHeatmap(rounds,total);
+ renderModels(total);
+ const hourWeights=[1,0,0,0,0,0,1,2,8,17,23,19,7,14,21,27,30,19,9,12,20,16,6,3];
+ const hourAmounts=allocate(rounds,hourWeights),hourTokens=allocate(total,hourWeights);
+ document.querySelector('#hours').innerHTML=hourAmounts.map((value,index)=>{
+  const height=Math.max(3,value/Math.max(...hourAmounts,1)*100);
+  const label=index+':00—'+(index+1)+':00：'+number(hourTokens[index])+' token，'+value+' 回合';
+  return '<button class="bar '+(value>=Math.max(...hourAmounts)*.65?'peak':'')+'" data-hour="'+index+'" style="height:'+height+'%" aria-label="'+label+'"></button>';
+ }).join('');
+ document.querySelectorAll('[data-hour]').forEach(bar=>{
+  const index=Number(bar.dataset.hour);
+  bindTooltip(bar,event=>showTooltip(bar,index+':00—'+(index+1)+':00',hourTokens[index],[['完成回合',number(hourAmounts[index])]],event));
+ });
+ const projects=project==='all'?['日志项目','示例项目 A','示例项目 B']:[document.querySelector('#project').selectedOptions[0].text];
+ const weights=project==='all'?[.46,.32,.22]:[1];
+ const projectRounds=allocate(rounds,weights),projectTokens=allocate(total,weights);
+ document.querySelector('#projects').innerHTML=projects.map((name,index)=>'<tr><td>'+name+'</td><td>'+number(projectRounds[index])+'</td><td>'+number(projectTokens[index])+'</td></tr>').join('');
+ document.querySelectorAll('aside div').forEach(item=>item.classList.toggle('chosen',item.textContent===document.querySelector('#project').selectedOptions[0].text));
+}
+document.querySelectorAll('[data-days]').forEach(button=>button.addEventListener('click',()=>{
+ days=Number(button.dataset.days);
+ document.querySelectorAll('[data-days]').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));
+ draw();
+}));
+['project','source','metric'].forEach(key=>document.getElementById(key).addEventListener('change',draw));
+document.addEventListener('keydown',event=>{if(event.key==='Escape'){hideTooltip();resetModel()}});
+window.addEventListener('scroll',()=>{hideTooltip();resetModel()},{passive:true});
+window.addEventListener('resize',()=>{hideTooltip();resetModel()});
+draw();
+</script>
+</body>
+</html>

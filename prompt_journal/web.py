@@ -19,6 +19,7 @@ from .search import item_anchor, searchable_fields
 from .attachments import content_type
 from .presentation import icon
 from .theme import STYLE
+from . import usage, usage_web
 
 
 LAZY_TEXT_LIMIT = 64 * 1024
@@ -76,6 +77,7 @@ def page(title: str, body: str, reading: bool = False, active: str = 'projects',
     current_project = ' aria-current="page"' if active == 'projects' else ''
     search_current = ' aria-current="page"' if active == 'search' else ''
     status_current = ' aria-current="page"' if active == 'status' else ''
+    usage_current = ' aria-current="page"' if active == 'usage' else ''
     manage_current = ' aria-current="page"' if active == 'manage' else ''
     project_links = ''
     contexts = project_contexts(projects or [])
@@ -84,10 +86,11 @@ def page(title: str, body: str, reading: bool = False, active: str = 'projects',
         label = project['label']
         short_name = project_name(label)
         context = f'<small>{escape(contexts[project["id"]])}</small>' if contexts[project['id']] else ''
-        project_links += f'<a style="--i:{min(index, 8)}" href="/project/{quote(project["id"], safe="")}" title="{escape(label, quote=True)}"{selected}>{icon("folder")}<span><span>{escape(short_name)}</span>{context}</span></a>'
+        project_href = '/usage?project=' + quote(project['id'], safe='') if active == 'usage' else '/project/' + quote(project['id'], safe='')
+        project_links += f'<a style="--i:{min(index, 8)}" href="{project_href}" title="{escape(label, quote=True)}"{selected}>{icon("folder")}<span><span>{escape(short_name)}</span>{context}</span></a>'
     header = (f'<header class="app-header"><a class="brand" href="/">{icon("brand")}<strong>本机会话记录</strong></a>'
               f'<nav class="primary-nav" aria-label="主要导航"><a href="/"{current_project}>{icon("folder")}项目</a>'
-              f'<a href="/search"{search_current}>{icon("search")}搜索</a><a href="/status"{status_current}>{icon("check")}采集状态</a>'
+              f'<a href="/search"{search_current}>{icon("search")}搜索</a><a href="/usage"{usage_current}>{icon("chart")}用量概览</a><a href="/status"{status_current}>{icon("check")}采集状态</a>'
               f'<a href="/manage/exclusions"{manage_current}>{icon("trash")}删除管理</a></nav>'
               '<form class="global-search" action="/search" method="get" role="search">'
               f'{icon("search")}<input id="global-search" type="search" name="q" aria-label="全局搜索正文" '
@@ -496,6 +499,7 @@ document.addEventListener('click', event => {
   if (event.target.matches('[data-session-more]')) loadSessionOptions(event.target.form, true);
 });
 function canRefreshPage() {
+  if (document.querySelector('.usage-dashboard')) return false;
   return !window.getSelection().toString() && !document.activeElement?.closest('form') && !document.querySelector('[data-session-choice]:checked') && !document.querySelector('[data-atlas-turn].selected') && !document.querySelector('[data-turn-group][data-expanded]') && !document.querySelector('.atlas-session-row.selected:not([data-group="0"])') && !document.querySelector('main.reader, .message-source[open]');
 }
 async function update() {
@@ -1301,7 +1305,18 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             options = parse_qs(url.query)
             instance = options.get("source", [None])[0]
             try:
-                if url.path == '/api/capacity':
+                if url.path in ('/usage.css', '/usage.js'):
+                    self.respond(200, 'text/css' if url.path.endswith('.css') else 'application/javascript',
+                                 Path(__file__).with_name(url.path[1:]).read_text(encoding='utf-8'))
+                elif url.path == '/api/usage':
+                    result = usage.aggregate(app.database, int(options.get('days', ['90'])[0]),
+                                             options.get('project', [None])[0], options.get('kind', ['main'])[0])
+                    self.respond(200, 'application/json', json.dumps(result, ensure_ascii=False))
+                elif url.path == '/usage':
+                    project_id = options.get('project', [None])[0]
+                    choices = usage.aggregate(app.database)['projectChoices']
+                    self.respond(200, 'text/html', page('用量概览', usage_web.BODY, active='usage', projects=choices, project_id=project_id))
+                elif url.path == '/api/capacity':
                     self.respond(200, 'application/json', json.dumps(app.capacity()))
                 elif url.path == '/capacity':
                     body = capacity_html(app.capacity(), token, app.database, saved=bool(options.get('saved')))
@@ -1522,7 +1537,7 @@ def create_server(app: Journal, port: int = 8765, collector: Collector | None = 
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             if download:
                 self.send_header("Content-Disposition", 'attachment; filename="session.json"')
             elif filename:

@@ -1,6 +1,7 @@
 """Local SVG icons shared by every web surface."""
 
 _PATHS = {
+    'chart': '<path d="M4 3v17h17M8 16v-5m5 5V6m5 10V9"/>',
     'user': '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
     'search': '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
     'folder': '<path d="M3 7V5a1 1 0 0 1 1-1h5l3 3h8a1 1 0 0 1 1 1v11H3V7Z"/><path d="M3 9h18"/>',

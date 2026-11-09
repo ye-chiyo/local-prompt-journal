@@ -20,6 +20,7 @@ from . import turns as turn_store
 from .catalog import project_identity, session_order
 from .storage import decode_package, encode_package, compact
 from . import retention
+from . import usage
 
 
 def default_data_dir() -> Path:
@@ -58,6 +59,8 @@ class Journal:
             return
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db, db:
+            usage.prepare_backup(db, self.data_dir)
+            usage.initialize(db)
             db.execute('BEGIN IMMEDIATE')
             db.execute("CREATE TABLE IF NOT EXISTS snapshots (number INTEGER PRIMARY KEY, instance TEXT NOT NULL, thread TEXT NOT NULL, saved TEXT NOT NULL, package TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS collection_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")

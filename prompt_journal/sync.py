@@ -10,6 +10,7 @@ from typing import Any, BinaryIO
 from .app import CapacityReached, Journal
 from .source import CodexHistory, HistoryError, now
 from .topology import remember_relation_metadata
+from .usage import UsageMonitor
 
 
 class Collector:
@@ -29,6 +30,7 @@ class Collector:
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
         self.ownership: BinaryIO | None = None
+        self.usage = UsageMonitor(journal.database)
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -51,11 +53,13 @@ class Collector:
             raise ValueError("此数据目录已有采集器运行；请先停止原服务。") from exc
         self.ownership = ownership
         self.stopping.clear()
+        self.usage.start()
         self.thread = threading.Thread(target=self._run, name="journal-collector", daemon=True)
         self.thread.start()
 
     def stop(self) -> None:
         self.stopping.set()
+        self.usage.stop()
         if self.thread:
             self.thread.join(timeout=30)
 
@@ -73,6 +77,7 @@ class Collector:
         try:
             self._reconcile()
         finally:
+            self.usage.stop()
             if self.ownership:
                 self.ownership.close()
                 self.ownership = None
@@ -84,6 +89,11 @@ class Collector:
                     while not self.stopping.is_set():
                         started = time.monotonic()
                         metadata = source.discover(self.page_size)
+                        try:
+                            self.usage.configure(source.instance(), source.identity.get('codexHome'), metadata)
+                        except Exception:
+                            # Statistics never blocks saving dialogue snapshots.
+                            pass
                         relation_metadata = remember_relation_metadata(metadata, source.instance(), self.state.get("relationMetadata", []))
                         saved_sessions = {s["id"]: s for s in self.journal.sessions() if s["source"]["instance"] == source.instance()}
                         results = []
